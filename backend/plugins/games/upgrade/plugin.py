@@ -1,4 +1,5 @@
-from core.contracts.game import AccountValidation, DeliveryResult, DeliveryStatus
+﻿from core.contracts.game import AccountValidation, DeliveryResult, DeliveryStatus
+from core.engine.rtp.engine import effective_rtp
 
 
 class UpgradeAdapter:
@@ -20,12 +21,37 @@ class UpgradeAdapter:
     def quote_prize(self, prize_id, amount_units):
         return None
 
-    def open_session(self, user, from_prize, to_prize):
+    async def open_session(self, user, from_prize, to_prize, config=None, conn=None, session_ctx=None):
+        if config is None:
+            config = self.config
+        if session_ctx is None:
+            if conn is not None:
+                from core.engine.rtp.behavior import session_context
+
+                uid = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+                session_ctx = await session_context(conn, uid)
+            else:
+                session_ctx = {}
         from_val = from_prize.get("value", 1)
         to_val = to_prize.get("value", 2)
-        house_edge = self.config.get("house_edge_factor", 0.8)
-        chance = (from_val / to_val) * house_edge
-        return {"from": from_prize, "to": to_prize, "chance": chance, "status": "open"}
+        base_rtp = float(self.config.get("rtp_base", 0.8))
+        decision = await effective_rtp(base_rtp, self.game_key, user, session_ctx)
+        house_edge = float(self.config.get("house_edge_factor", 0.8))
+        chance = (from_val / to_val) * house_edge * decision.rtp_effective
+        is_admin = user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        session = {
+            "from": from_prize,
+            "to": to_prize,
+            "chance": chance,
+            "status": "open",
+            "rtp_effective": decision.rtp_effective,
+            "config_version_id": self.config.get("version", 1),
+            "modifiers_applied": list(decision.modifiers_applied),
+            "admin_override": bool(decision.override and is_admin),
+        }
+        if session["admin_override"]:
+            session["status"] = "won"
+        return session
 
     def resolve(self, session, action):
         if action != "spin":

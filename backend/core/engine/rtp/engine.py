@@ -32,7 +32,12 @@ async def _redis():
     return redis.from_url(url)
 
 
-async def effective_rtp(base: float, game_key: str, user, session_ctx: dict):
+async def effective_rtp(base_rtp=None, game_key: str = '', user=None, session_ctx: dict = None, base: float = None):
+    if base is not None:
+        base_rtp = base
+    if base_rtp is None:
+        base_rtp = 0.9
+    base = float(base_rtp)
     allowed = allowed_modifiers(game_key)
     modifiers_applied = []
     value = base
