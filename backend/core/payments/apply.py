@@ -1,3 +1,4 @@
+import json
 import inspect
 
 from core.engine.ledger.ledger import post_entry
@@ -38,13 +39,14 @@ async def apply_event(conn, event: dict) -> ApplyResult:
     ).fetchone()
     if row:
         return ApplyResult("duplicate", False)
-    await post_entry(conn, user_id, currency, amount_minor, "deposit_units", idempotency_key)
+    reason = "deposit_units" if currency == "units" else "deposit_freebets"
+    await post_entry(conn, user_id, currency, amount_minor, reason, idempotency_key)
     await conn.execute(
         "INSERT INTO events (user_id, event_type, payload, idempotency_key) VALUES (%s, %s, %s, %s)",  # noqa: E501
         (
             user_id,
             "deposit",
-            {"rail": rail, "provider_event_id": provider_event_id},
+            json.dumps({"rail": rail, "provider_event_id": provider_event_id}),
             idempotency_key,
         ),
     )
