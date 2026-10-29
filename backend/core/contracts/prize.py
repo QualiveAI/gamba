@@ -12,6 +12,7 @@ class DeliveryResult:
 class VerificationResult:
     delivery_id: str
     verified: bool
+    amount_match: bool = True
     details: str = ""
 
 

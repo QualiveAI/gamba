@@ -167,9 +167,13 @@ async def unfreeze(conn, withdrawal_id):
 
 
 async def finalize(conn, withdrawal_id):
+    import asyncio
+
+    from core.delivery.router import DeliveryDeferred, SettlementMismatch, verify_delivery
+
     row = await (
         await conn.execute(
-            "SELECT id, code_id, amount_units, status FROM withdrawals WHERE id = %s FOR UPDATE",
+            "SELECT id, code_id, amount_units, fee_units, status, idempotency_key FROM withdrawals WHERE id = %s FOR UPDATE",  # noqa: E501
             (withdrawal_id,),
         )
     ).fetchone()
@@ -179,17 +183,55 @@ async def finalize(conn, withdrawal_id):
         return {"status": "issued"}
     if row["status"] not in ("approved", "pending"):
         raise ValueError("not finalizable")  # noqa: B904
-    code = await (
+    idem = row.get("idempotency_key") if isinstance(row, dict) else None
+    if not idem:
+        idem = f"wd:{withdrawal_id}"
         await conn.execute(
-            "SELECT code, nominal_units FROM gift_codes WHERE id = %s", (row["code_id"],)
+            "UPDATE withdrawals SET idempotency_key = %s WHERE id = %s", (idem, withdrawal_id)
         )
-    ).fetchone()
-    if code and int(code["nominal_units"]) != int(row["amount_units"]):
+        await conn.commit()
+    try:
+        result = await asyncio.wait_for(verify_delivery(row["code_id"]), timeout=15)
+    except TimeoutError:
         await conn.execute(
             "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
         )
         await conn.commit()
-        raise ValueError("settlement mismatch")  # noqa: B904
+        return {"status": "manual_review"}
+    except (SettlementMismatch, DeliveryDeferred) as e:
+        if isinstance(e, SettlementMismatch):
+            await conn.execute(
+                "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
+            )
+            await conn.commit()
+            return {"status": "manual_review"}
+        await conn.execute(
+            "UPDATE withdrawals SET status = 'pending_supplier' WHERE id = %s", (withdrawal_id,)
+        )
+        await conn.commit()
+        return {"status": "pending_supplier"}
+    code = await (
+        await conn.execute("SELECT nominal_units FROM gift_codes WHERE id = %s", (row["code_id"],))
+    ).fetchone()
+    fee = int(row.get("fee_units", 0) or 0)
+    expected_nominal = int(row["amount_units"]) - fee
+    if code and int(code["nominal_units"]) != expected_nominal:
+        await conn.execute(
+            "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
+        )
+        await conn.commit()
+        return {"status": "manual_review"}
+    verified = getattr(result, "verified", None)
+    amount_match = getattr(result, "amount_match", None)
+    if verified is None and isinstance(result, dict):
+        verified = result.get("verified")
+        amount_match = result.get("amount_match")
+    if not (verified and amount_match):
+        await conn.execute(
+            "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
+        )
+        await conn.commit()
+        return {"status": "manual_review"}
     await conn.execute(
         "UPDATE withdrawals SET status = 'issued', decided_at = now() WHERE id = %s",
         (withdrawal_id,),
