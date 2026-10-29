@@ -37,16 +37,22 @@ from core.api.router import (
     withdrawals_router as core_withdrawals_router,
 )
 from core.observability.metrics import render_prometheus
+from core.catalog.analytics import auto_pause_all_cases
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_pool()
+    scheduler.start()
     yield
+    scheduler.shutdown()
     await close_pool()
 
 
 app = FastAPI(title="roblox-case-platform", lifespan=lifespan)
+scheduler = AsyncIOScheduler()
+scheduler.add_job(auto_pause_all_cases, "interval", minutes=10, id="auto_pause", replace_existing=True)
 app.include_router(auth_router)
 app.include_router(meta_router)
 app.include_router(deposits_router)
@@ -84,3 +90,5 @@ async def metrics(request: Request):
     if token != os.getenv("METRICS_TOKEN", "") and request.client.host not in allow:
         return Response(status_code=404)
     return Response(content=render_prometheus(), media_type="text/plain")
+
+

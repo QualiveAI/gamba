@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS case_definitions (
     description TEXT,
     artwork_media_id BIGINT REFERENCES media_assets(id) ON DELETE RESTRICT,
     currency TEXT NOT NULL CHECK (currency IN ('units','freebets')),
-    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived')),
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published','archived','paused')),
     created_by BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (tenant, game_key, slug)

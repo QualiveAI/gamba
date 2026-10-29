@@ -1,3 +1,4 @@
+import json
 from app.db import get_conn
 
 
@@ -39,8 +40,37 @@ async def auto_pause_if_drift(case_id: int):
             )
             await conn.execute(
                 "INSERT INTO events (user_id, event_type, payload) VALUES (%s, %s, %s)",
-                (None, "case_paused", {"case_id": case_id_real}),
+                (None, "case_paused", json.dumps({"case_id": case_id_real})),
             )
             await conn.commit()
             return True
         return False
+
+
+async def published_case_ids():
+    async with get_conn() as conn:
+        rows = await (
+            await conn.execute("SELECT id FROM case_definitions WHERE status = 'published'")
+        ).fetchall()
+    return [r["id"] for r in rows]
+
+
+async def auto_pause_all_cases():
+    paused = []
+    async with get_conn() as conn:
+        rows = await (
+            await conn.execute("SELECT id FROM case_definitions WHERE status = 'published'")
+        ).fetchall()
+        case_ids = [r["id"] for r in rows]
+    for case_id in case_ids:
+        async with get_conn() as conn:
+            vrow = await (
+                await conn.execute(
+                    "SELECT id FROM case_versions WHERE case_id = %s ORDER BY version_no DESC LIMIT 1",
+                    (case_id,),
+                )
+            ).fetchone()
+        if vrow is not None:
+            await auto_pause_if_drift(vrow["id"])
+            paused.append(vrow["id"])
+    return paused

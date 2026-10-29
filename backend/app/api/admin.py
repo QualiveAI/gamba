@@ -71,3 +71,14 @@ async def get_freebets_config(admin=Depends(require_admin)):  # noqa: E501, B008
 @router.post("/freebets/config")
 async def set_freebets_config(payload: dict, admin=Depends(require_admin)):  # noqa: E501, B008  # noqa: B008  # noqa: B008
     return {"ok": True, "version": 1}
+
+@router.post("/cases/{case_id}/unpause")
+async def unpause_case(case_id: int, admin=Depends(require_admin)):  # noqa: E501, B008  # noqa: B008  # noqa: B008
+    async with get_conn() as conn:
+        await conn.execute("UPDATE case_definitions SET status = 'published' WHERE id = %s", (case_id,))
+        await conn.execute(
+            "INSERT INTO events (user_id, event_type, payload) VALUES (%s, %s, %s)",
+            (None, "case_unpaused", {"case_id": case_id}),
+        )
+        await conn.commit()
+    return {"ok": True}
