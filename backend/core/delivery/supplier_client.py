@@ -135,7 +135,7 @@ async def purchase_with_fallback(*args, **kwargs):
             continue
         except DeliveryDeferred:
             raise
-    raise DeliveryDeferred(delivery_id, "supplier_down" if last_error is None else str(last_error))
+    raise DeliveryDeferred(delivery_id, "supplier_down")
 
 
 async def check_delivery(delivery_id):

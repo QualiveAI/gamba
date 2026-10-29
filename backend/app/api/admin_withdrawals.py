@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.api.deps import require_admin
 from app.db import get_conn
 from app.withdrawals import service
+from core.delivery.errors import DeliveryDeferred, SettlementMismatch
 
 router = APIRouter(prefix="/admin/withdrawals", tags=["admin_withdrawals"])
 
@@ -51,3 +52,17 @@ async def unfreeze(withdrawal_id: int, admin=Depends(require_admin)):  # noqa: E
     async with get_conn() as conn:
         await service.unfreeze(conn, withdrawal_id)
     return {"id": withdrawal_id, "status": "pending"}
+
+
+@router.post("/{withdrawal_id}/finalize")
+async def finalize(withdrawal_id: int, admin=Depends(require_admin)):  # noqa: E501, B008
+    async with get_conn() as conn:
+        try:
+            res = await service.finalize(conn, withdrawal_id)
+        except DeliveryDeferred as e:
+            return {"id": withdrawal_id, "status": "pending_supplier", "reason": e.reason}
+        except SettlementMismatch as e:
+            return {"id": withdrawal_id, "status": "manual_review", "reason": str(e)}
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
+    return {"id": withdrawal_id, **res}
