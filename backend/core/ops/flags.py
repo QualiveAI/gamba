@@ -1,3 +1,7 @@
+from core.ops.exceptions import ServiceDisabled
+
+
+import json
 import os
 
 import redis.asyncio as redis
@@ -25,13 +29,23 @@ async def get_flag(conn, key: str, default: bool = True) -> bool:
 
 async def set_flag(conn, key: str, value: bool, who: str = "admin"):
     await conn.execute(
-        "INSERT INTO system_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",  # noqa: E501
-        (key, {"value": value}),
+        "INSERT INTO system_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        (key, json.dumps({"value": value})),
     )
-    await conn.commit()
-    # audit
+    try:
+        r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        await r.delete(f"flag:{key}")
+        await r.aclose()
+    except Exception:
+        pass
     await conn.execute(
         "INSERT INTO events (user_id, event_type, payload) VALUES (%s, %s, %s)",
-        (None, "flag_change", {"key": key, "value": value, "who": who}),
+        (None, "flag_change", json.dumps({"key": key, "value": value, "who": who})),
     )
     await conn.commit()
+
+
+async def require_enabled(conn, key: str, service: str = "service") -> None:
+    enabled = await get_flag(conn, key, True)
+    if not enabled:
+        raise ServiceDisabled(service)
