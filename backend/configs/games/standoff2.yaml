@@ -1,0 +1,9 @@
+game_key: standoff2
+display_name: Standoff 2
+prize_catalog_path: configs/games/standoff2.prizes.yaml
+unit_name: units
+withdraw_min_minor: 15000
+withdraw_fee_pct: 20
+hold_days: 1
+allowed_modifiers: [f_win, f_bet, f_chase]
+delivery_channels: [market_listing, manual_review]

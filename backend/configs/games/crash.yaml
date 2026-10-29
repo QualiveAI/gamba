@@ -1,0 +1,4 @@
+game_key: crash
+house_edge_factor: 0.95
+tick_interval: 200
+max_multiplier: 1000

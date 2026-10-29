@@ -1,0 +1,9 @@
+game_key: pubgm
+display_name: PUBG Mobile
+prize_catalog_path: configs/games/pubgm.prizes.yaml
+unit_name: units
+withdraw_min_minor: 15000
+withdraw_fee_pct: 20
+hold_days: 1
+allowed_modifiers: [f_win, f_bet]
+delivery_channels: [uid_topup]

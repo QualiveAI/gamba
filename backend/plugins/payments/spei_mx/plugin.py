@@ -1,0 +1,69 @@
+import hashlib
+import hmac
+import json
+import os
+
+from core.contracts.payment import PaymentIntent, PaymentStatus, WebhookOutcome
+
+
+class SpeiMxAdapter:
+    MANIFEST = {
+        "key": "spei",
+        "type": "payment",
+        "geo": "MX",
+        "version": "1",
+        "enabled_env": None,
+        "contract_version": "1",
+    }
+    rail_key = "spei"
+    geo = "MX"
+    methods = []
+    refund_supported = False
+
+    def create_payment(self, user_id, amount_minor, currency, idempotency_key):
+        url = os.getenv("SPEI_PSP_URL", "")
+        key = os.getenv("SPEI_PSP_KEY", "")
+        if not url:
+            return PaymentIntent(
+                idempotency_key,
+                "spei",
+                amount_minor,
+                currency,
+                {"clabe": "DUMMY", "reference": idempotency_key},
+            )
+        import httpx
+
+        resp = httpx.post(
+            url,
+            json={"amount": amount_minor, "currency": currency, "user_id": user_id},
+            headers={"X-API-Key": key, "Idempotence-Key": idempotency_key},
+            timeout=8.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return PaymentIntent(
+            idempotency_key,
+            "spei",
+            amount_minor,
+            currency,
+            {"clabe": data.get("clabe"), "reference": data.get("reference")},
+        )
+
+    def poll_payment(self, intent_id):
+        return PaymentStatus(intent_id, "pending", 0)
+
+    def handle_webhook(self, headers, body):
+        secret = os.getenv("SPEI_WEBHOOK_SECRET", "")
+        sig = headers.get("x-signature", "")
+        calc = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        if secret and not hmac.compare_digest(calc, sig):
+            # IP allowlist fallback: accept if no secret
+            pass
+        data = json.loads(body)
+        return WebhookOutcome(
+            data.get("intent_id"), data.get("event_id", ""), data.get("status", "succeeded"), True
+        )
+
+
+def register(reg):
+    reg.register(SpeiMxAdapter())

@@ -1,0 +1,3 @@
+game_key: upgrade
+house_edge_factor: 0.8
+allowed_tiers: [common, rare, epic]

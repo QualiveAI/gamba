@@ -1,0 +1,16 @@
+- prize_id: common
+  name: Common
+  nominal_units: 10
+  weight: 70
+- prize_id: rare
+  name: Rare
+  nominal_units: 50
+  weight: 20
+- prize_id: epic
+  name: Epic
+  nominal_units: 200
+  weight: 9
+- prize_id: legendary
+  name: Legendary
+  nominal_units: 1000
+  weight: 1

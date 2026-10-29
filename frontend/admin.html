@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>admin panel</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <h1>Admin Panel</h1>
+    <section>
+      <h2>Withdrawals</h2>
+      <select id="wd-status"><option value="">all</option><option value="pending">pending</option><option value="frozen">frozen</option><option value="approved">approved</option><option value="rejected">rejected</option></select>
+      <table id="wd-table"><thead><tr><th>id</th><th>user</th><th>amount</th><th>status</th><th>actions</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section>
+      <h2>Gift Reviews</h2>
+      <table id="gift-table"><thead><tr><th>id</th><th>user</th><th>gift</th><th>status</th><th>price</th><th>actions</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section>
+      <h2>Antifraud Flags</h2>
+      <ul id="flags-list"></ul>
+    </section>
+    <section>
+      <h2>Ledger</h2>
+      <button id="reconcile-btn">Reconcile</button>
+      <div id="reconcile-result"></div>
+    </section>
+    <section>
+      <h2>Analytics</h2>
+      <button id="analytics-btn">Load 30d</button>
+      <div id="analytics-result"></div>
+    </section>
+  </div>
+  <script src="admin.js"></script>
+</body>
+</html>

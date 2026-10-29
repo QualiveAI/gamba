@@ -1,0 +1,32 @@
+brand:
+  logo_url: ''
+  name: CasePlatform
+  primary_color: '#101014'
+domains:
+  api: https://api.example.com
+  frontend: https://app.example.com
+games:
+- enabled: true
+  game_key: roblox
+  rtp_profile:
+    active: 0.88
+    new: 0.95
+    veteran: 0.85
+- enabled: false
+  game_key: standoff2
+geos:
+- currency_display: BRL
+  enabled: true
+  geo: BR
+  kyc: none
+  max_deposit_minor: 500000
+  min_deposit_minor: 500
+  rails:
+  - pix
+  - crypto_usdt
+- enabled: false
+  geo: PH
+  rails:
+  - qrph
+  - crypto_usdt
+tenant: default

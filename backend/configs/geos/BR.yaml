@@ -1,0 +1,7 @@
+geo: BR
+rails:
+  - pix
+  - crypto_usdt
+min_deposit_minor: 500
+max_deposit_minor: 500000
+kyc: none

@@ -1,0 +1,5 @@
+game_key: cases
+display_name: Cases
+prize_catalog_path: configs/games/cases.prizes.yaml
+allowed_modifiers: [f_win, f_bet, f_chase, f_admin]
+unit_name: units

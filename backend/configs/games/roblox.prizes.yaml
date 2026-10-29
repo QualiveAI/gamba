@@ -1,0 +1,8 @@
+- prize_id: gc_100
+  name: "Roblox Gift Card 100"
+  nominal_units: 100
+  region: US
+- prize_id: gc_500
+  name: "Roblox Gift Card 500"
+  nominal_units: 500
+  region: US

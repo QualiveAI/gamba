@@ -1,0 +1,9 @@
+welcome_freebet_units: 50
+tiers:
+  - max_minor: 49999
+    referrer_units: 50
+  - max_minor: 199999
+    referrer_units: 150
+  - max_minor: 999999999
+    referrer_units: 400
+referee_welcome_freebet_units: 25

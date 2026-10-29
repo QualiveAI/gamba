@@ -1,0 +1,7 @@
+game_key: roblox
+display_name: "Roblox"
+prize_catalog_path: "configs/games/roblox.prizes.yaml"
+unit_name: "units"
+withdraw_min: 150
+withdraw_fee_pct: 20
+hold_days: 1

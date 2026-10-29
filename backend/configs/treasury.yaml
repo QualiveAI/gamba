@@ -1,0 +1,11 @@
+arctic:
+  allocation_pct: 40
+  min_batch: 1000
+onesix:
+  allocation_pct: 30
+  min_batch: 1000
+otc:
+  allocation_pct: 20
+  min_batch: 1000
+reserve:
+  allocation_pct: 10

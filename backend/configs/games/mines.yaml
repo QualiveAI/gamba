@@ -1,0 +1,6 @@
+game_key: mines
+multipliers: [1.0, 1.2, 1.5, 2.0]
+mine_count: 3
+thresholds:
+  low: 10
+  high: 100

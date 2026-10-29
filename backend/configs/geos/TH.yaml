@@ -1,0 +1,6 @@
+geo: TH
+rails: [truemoney, crypto_usdt]
+min_deposit_minor: 500
+max_deposit_minor: 500000
+currency_display: THB
+kyc: none

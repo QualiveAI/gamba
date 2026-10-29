@@ -1,0 +1,9 @@
+welcome_freebet_units: 50
+daily_freebet_units:
+  new: 5
+  active: 10
+  veteran: 20
+deposit_streak:
+  days_required: 3
+  bonus_freebet_units: 10
+  reset_after_hours: 48

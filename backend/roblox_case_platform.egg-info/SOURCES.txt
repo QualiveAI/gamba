@@ -1,0 +1,6 @@
+pyproject.toml
+roblox_case_platform.egg-info/PKG-INFO
+roblox_case_platform.egg-info/SOURCES.txt
+roblox_case_platform.egg-info/dependency_links.txt
+roblox_case_platform.egg-info/requires.txt
+roblox_case_platform.egg-info/top_level.txt

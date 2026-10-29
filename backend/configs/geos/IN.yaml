@@ -1,0 +1,6 @@
+geo: IN
+rails: [upi, crypto_usdt]
+min_deposit_minor: 500
+max_deposit_minor: 500000
+currency_display: INR
+kyc: none

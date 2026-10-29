@@ -1,0 +1,15 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cd backend && pip install -e .[dev]
+      - run: cd backend && ruff check .
+      - run: cd backend && ruff format --check .
+      - run: cd backend && python -m pytest tests/ -q
+      - run: cd backend && docker compose -f ../infra/docker-compose.yml config -q

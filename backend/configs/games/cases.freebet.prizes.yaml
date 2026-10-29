@@ -1,0 +1,11 @@
+# configs/games/cases.freebet.prizes.yaml
+- prize_id: fb_common
+  name: "Freebet Common"
+  nominal_units: 5
+  real_value_minor: 500
+  weight: 70
+- prize_id: fb_rare
+  name: "Freebet Rare"
+  nominal_units: 20
+  real_value_minor: 2000
+  weight: 30

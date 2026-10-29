@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>roblox-case-platform</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header><h1>Case Platform</h1><div id="balance">0</div></header>
+    <nav>
+      <button data-screen="cases">Cases</button>
+      <button data-screen="mines">Mines</button>
+      <button data-screen="deposit">Deposit</button>
+      <button data-screen="withdraw">Withdraw</button>
+      <button data-screen="referral">Referral</button>
+    </nav>
+    <main>
+      <section id="screen-cases" class="screen active"><div id="cases-list"></div></section>
+      <section id="screen-mines" class="screen"><canvas id="mines-canvas" width="250" height="250"></canvas></section>
+      <section id="screen-deposit" class="screen">
+        <input id="dep-amount" type="number" title="amount RUB" />
+        <button id="dep-btn">Create SBP Payment</button>
+        <div id="qr"></div>
+        <button id="manual-claim">I paid</button>
+      </section>
+      <section id="screen-withdraw" class="screen">
+        <input id="wd-amount" type="number" title="amount" />
+        <input id="wd-region" title="region" />
+        <button id="wd-btn">Withdraw</button>
+        <div id="wd-result"></div>
+      </section>
+      <section id="screen-referral" class="screen"><div id="ref-link"></div></section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

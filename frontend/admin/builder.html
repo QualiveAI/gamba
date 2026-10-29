@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Case Builder</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <h1>Case Builder</h1>
+    <div id="case-list"></div>
+    <div id="editor">
+      <input id="title" placeholder="title" />
+      <select id="game"><option value="cases">cases</option></select>
+      <select id="currency"><option value="units">units</option><option value="freebets">freebets</option></select>
+      <input id="artwork" type="file" />
+      <div id="prizes"></div>
+      <button id="add-prize">Add prize</button>
+      <div id="rtp-panel"></div>
+      <button id="publish">Publish</button>
+    </div>
+  </div>
+  <script src="js/admin_builder.js"></script>
+</body>
+</html>
