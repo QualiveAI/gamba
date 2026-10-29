@@ -7,7 +7,9 @@ from core.payments.events import ingest, process_pending, link_intent
 from core.payments.intents import create_intent
 
 
-async def _user_id(tg=900202):
+async def _user_id(tg=None):
+    if tg is None:
+        tg = 900000 + (uuid.uuid4().int % 100000)
     async with get_conn() as conn:
         await conn.execute(
             "INSERT INTO users (telegram_id, balance_units, region, created_at) "
@@ -49,7 +51,7 @@ async def test_ingest_idempotent():
 
 @pytest.mark.asyncio
 async def test_process_pending_credits():
-    uid = await _user_id(900203)
+    uid = await _user_id()
     ikey = f"intent-{uuid.uuid4().hex}"
     ekey = f"evt-{uuid.uuid4().hex}"
     intent = await create_intent(uid, "default", "mock", 500, "units", ikey)
@@ -77,7 +79,7 @@ async def test_process_pending_skips_no_intent():
 
 @pytest.mark.asyncio
 async def test_process_pending_idempotent_no_double_credit():
-    uid = await _user_id(900204)
+    uid = await _user_id()
     ikey = f"intent-{uuid.uuid4().hex}"
     ekey1 = f"evt-{uuid.uuid4().hex}"
     ekey2 = f"evt-{uuid.uuid4().hex}"
@@ -94,7 +96,7 @@ async def test_process_pending_idempotent_no_double_credit():
 
 @pytest.mark.asyncio
 async def test_link_intent():
-    uid = await _user_id(900205)
+    uid = await _user_id()
     ikey = f"intent-{uuid.uuid4().hex}"
     ekey = f"evt-{uuid.uuid4().hex}"
     intent = await create_intent(uid, "default", "mock", 50, "units", ikey)
