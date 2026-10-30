@@ -10,21 +10,27 @@ router = APIRouter(prefix="/admin/cases", tags=["admin_cases"])
 @router.post("")
 async def create_case(payload: dict, admin=Depends(require_admin)):  # noqa: B008  # noqa: B008
     async with get_conn() as conn:
-        cur = await conn.execute(
-            "INSERT INTO case_definitions (tenant, game_key, slug, title, description, artwork_media_id, currency, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",  # noqa: E501
-            (
-                payload.get("tenant", "default"),
-                payload.get("game_key"),
-                payload.get("slug"),
-                payload.get("title"),
-                payload.get("description"),
-                payload.get("artwork_media_id"),
-                payload.get("currency", "units"),
-                admin["id"],
-            ),
-        )
-        cid = (await cur.fetchone())["id"]
-        await conn.commit()
+        try:
+            cur = await conn.execute(
+                "INSERT INTO case_definitions (tenant, game_key, slug, title, description, artwork_media_id, currency, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",  # noqa: E501
+                (
+                    payload.get("tenant", "default"),
+                    payload.get("game_key"),
+                    payload.get("slug"),
+                    payload.get("title"),
+                    payload.get("description"),
+                    payload.get("artwork_media_id"),
+                    payload.get("currency", "units"),
+                    admin["id"],
+                ),
+            )
+            cid = (await cur.fetchone())["id"]
+            await conn.commit()
+        except Exception as e:
+            await conn.rollback()
+            if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+                raise HTTPException(status_code=409, detail="DuplicateSlug")  # noqa: B904
+            raise
     return {"id": cid, "status": "draft"}
 
 
@@ -42,6 +48,11 @@ async def list_cases(admin=Depends(require_admin)):  # noqa: B008  # noqa: B008
 @router.patch("/{case_id}")
 async def patch_case(case_id: int, payload: dict, admin=Depends(require_admin)):  # noqa: E501, B008  # noqa: B008
     async with get_conn() as conn:
+        row = await (
+            await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))
+        ).fetchone()
+        if row is None or row["status"] != "draft":
+            raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
         await conn.execute(
             "UPDATE case_definitions SET title = COALESCE(%s, title), description = COALESCE(%s, description) WHERE id = %s AND status = 'draft'",  # noqa: E501
             (payload.get("title"), payload.get("description"), case_id),
@@ -85,6 +96,16 @@ async def put_prizes(case_id: int, vid: int, payload: dict, admin=Depends(requir
         ).fetchone()
         if vrow and vrow["published_at"] is not None:
             raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
+        # get currency
+        cdef = await (
+            await conn.execute("SELECT currency FROM case_definitions WHERE id = %s", (case_id,))
+        ).fetchone()
+        currency = cdef["currency"] if cdef else "units"
+        # validate
+        from core.catalog.rtp import validate_catalog
+        report = validate_catalog(prizes, currency, 9000)
+        if not report["valid"]:
+            raise HTTPException(status_code=400, detail=report)  # noqa: B904
         await conn.execute("DELETE FROM case_prizes WHERE version_id = %s", (vid,))
         for i, p in enumerate(prizes):
             await conn.execute(
@@ -109,6 +130,8 @@ async def preview(case_id: int, vid: int, admin=Depends(require_admin)):  # noqa
         vrow = await (
             await conn.execute("SELECT rtp_target_bp FROM case_versions WHERE id = %s", (vid,))
         ).fetchone()
+        if vrow is None:
+            raise HTTPException(status_code=404, detail="VersionNotFound")  # noqa: B904
         prizes = await (
             await conn.execute(
                 "SELECT label, media_id, nominal_units, real_value_minor, weight_bp FROM case_prizes WHERE version_id = %s",  # noqa: E501
@@ -116,7 +139,7 @@ async def preview(case_id: int, vid: int, admin=Depends(require_admin)):  # noqa
             )
         ).fetchall()
         report = validate_catalog([dict(p) for p in prizes], "units", vrow["rtp_target_bp"])
-    return report
+    return {"rtp_bp": report["rtp_bp"], "ev_minor": report["ev_minor"], "warnings": report["warnings"]}
 
 
 @router.post("/{case_id}/versions/{vid}/publish")
@@ -127,8 +150,13 @@ async def publish(case_id: int, vid: int, payload: dict, admin=Depends(require_a
                 "SELECT published_at, rtp_target_bp FROM case_versions WHERE id = %s", (vid,)
             )
         ).fetchone()
+        if vrow is None:
+            raise HTTPException(status_code=404, detail="VersionNotFound")  # noqa: B904
         if vrow["published_at"] is not None:
             raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
+        # typed confirmation required
+        if payload.get("confirm") != "PUBLISH v1":
+            raise HTTPException(status_code=400, detail="TypedConfirmationRequired")  # noqa: B904
         prizes = await (
             await conn.execute(
                 "SELECT label, media_id, nominal_units, real_value_minor, weight_bp FROM case_prizes WHERE version_id = %s",  # noqa: E501
