@@ -3,7 +3,7 @@ let jwtToken = sessionStorage.getItem("jwt") || "";
 
 async function ensureAuth() {
   if (jwtToken) return jwtToken;
-  const tg = window.Telegram.WebApp;
+  const tg = (window.Telegram && window.Telegram.WebApp) || { ready() {}, expand() {}, initData: "" };
   const res = await fetch(API_BASE + "/auth/telegram", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -4,8 +4,9 @@ body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:v
 header { display:flex; justify-content:space-between; padding:12px; }
 nav { display:flex; gap:8px; padding:8px; }
 nav button { flex:1; padding:8px; background:#1a1d24; color:var(--fg); border:1px solid #2a2d34; border-radius:6px; }
-.screen { display:none; padding:12px; }
+.screen { display:none; padding:12px; min-height: 1px; }
 .screen.active { display:block; }
+#cases-list, #mines-grid, #deposit-methods { min-height: 1px; }
 .case { background:#1a1d24; padding:12px; margin:8px 0; border-radius:8px; }
 .case button { background:var(--accent); color:#fff; border:none; padding:6px 12px; border-radius:4px; }
 input { width:100%; padding:8px; margin:6px 0; background:#1a1d24; color:var(--fg); border:1px solid #2a2d34; border-radius:4px; }

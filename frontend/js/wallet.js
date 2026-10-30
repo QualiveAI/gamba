@@ -1,15 +1,21 @@
 async function renderWallet() {
-  const data = await window.api("/wallet");
-  const units = data.units || 0;
-  const freebets = data.freebets || 0;
-  const minWithdraw = data.min_withdraw || 100000;
+  let units = 0, freebets = 0, minWithdraw = 100000;
+  try {
+    const data = await window.api("/wallet");
+    units = data.units || 0;
+    freebets = data.freebets || 0;
+    minWithdraw = data.min_withdraw || 100000;
+  } catch (e) {
+    console.log("renderWallet error:", e.message);
+  }
 
   const container = document.getElementById("wallet");
-  if (!container) return;
-  container.innerHTML = `
-    <div class="balance-row"><span>Units</span><span>${units}</span></div>
-    <div class="balance-row"><span>Freebets</span><span>${freebets} <span class="badge">non-withdrawable</span></span></div>
-  `;
+  if (container) {
+    container.innerHTML = `
+      <div class="balance-row"><span>Units</span><span>${units}</span></div>
+      <div class="balance-row"><span>Freebets</span><span>${freebets} <span class="badge">non-withdrawable</span></span></div>
+    `;
+  }
 
   const wdBtn = document.getElementById("wd-btn");
   if (wdBtn) {
