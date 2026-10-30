@@ -1,0 +1,1 @@
+{"key": "mlbb", "type": "game", "contract_version": 1, "enabled_env": "MLBB_ENABLED"}

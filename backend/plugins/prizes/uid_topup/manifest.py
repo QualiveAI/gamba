@@ -1,0 +1,1 @@
+{"key": "uid_topup", "type": "prize", "contract_version": 1, "enabled_env": "TOPUP_ENABLED"}
