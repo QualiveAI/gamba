@@ -8,6 +8,7 @@ from core.contracts.game import (
     PrizeSpec,
 )
 from core.engine.freebets.config import load_freebet_catalog
+from core.engine.rtp.engine import effective_rtp
 
 
 class CasesFreebetAdapter:
@@ -51,7 +52,22 @@ class CasesFreebetAdapter:
             if r <= acc:
                 chosen = p
                 break
-        return {"prize": chosen, "bet": bet_freebets, "currency": "freebets"}
+        # RTP engine - apply modifiers, clamp [0.80, 0.95]
+        session_ctx = config.get("session_ctx", {}) if config else {}
+        user_dict = user if isinstance(user, dict) else {"id": getattr(user, "id", None)}
+        rtp_decision = await effective_rtp(
+            base_rtp=self.config.get("rtp", 0.9) if hasattr(self, "config") else 0.9,
+            game_key=self.game_key,
+            user=user_dict,
+            session_ctx=session_ctx,
+        )
+        return {
+            "prize": chosen,
+            "bet": bet_freebets,
+            "currency": "freebets",
+            "rtp_effective": rtp_decision.rtp_effective,
+            "modifiers_applied": rtp_decision.modifiers_applied,
+        }
 
     def resolve(self, session, action):
         return session
