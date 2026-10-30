@@ -37,12 +37,24 @@ async def ingest(
         ).fetchone()
         if existing:
             return int(existing["id"])
-        await conn.execute(
-            "INSERT INTO payment_events (rail, provider_event_id, intent_id, raw_payload) "
-            "VALUES (%s, %s, %s, %s)",
-            (rail, provider_event_id, intent_id, json.dumps(raw_payload)),
-        )
-        await conn.commit()
+        try:
+            await conn.execute(
+                "INSERT INTO payment_events (rail, provider_event_id, intent_id, raw_payload) "
+                "VALUES (%s, %s, %s, %s)",
+                (rail, provider_event_id, intent_id, json.dumps(raw_payload)),
+            )
+            await conn.commit()
+        except Exception:
+            await conn.rollback()
+            existing = await (
+                await conn.execute(
+                    "SELECT id FROM payment_events WHERE rail = %s AND provider_event_id = %s",
+                    (rail, provider_event_id),
+                )
+            ).fetchone()
+            if existing:
+                return int(existing["id"])
+            raise
         row = await (
             await conn.execute(
                 "SELECT id FROM payment_events WHERE rail = %s AND provider_event_id = %s",
