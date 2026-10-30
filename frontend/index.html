@@ -14,28 +14,73 @@
     <nav>
       <button data-screen="cases">Cases</button>
       <button data-screen="mines">Mines</button>
+      <button data-screen="crash">Crash</button>
+      <button data-screen="upgrade">Upgrade</button>
+      <button data-screen="shell">Shell</button>
+      <button data-screen="wallet">Wallet</button>
       <button data-screen="deposit">Deposit</button>
       <button data-screen="withdraw">Withdraw</button>
-      <button data-screen="referral">Referral</button>
     </nav>
     <main>
       <section id="screen-cases" class="screen active"><div id="cases-list"></div></section>
-      <section id="screen-mines" class="screen"><canvas id="mines-canvas" width="250" height="250"></canvas></section>
+      <section id="screen-mines" class="screen">
+        <input id="mines-bet" type="number" value="100" />
+        <button onclick="startMines()">Start</button>
+        <div id="mines-multiplier">1.00</div>
+        <div id="mines-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;"></div>
+        <button onclick="cashoutMines()">Cashout</button>
+        <div id="mines-toast"></div>
+      </section>
+      <section id="screen-crash" class="screen">
+        <div id="crash-multiplier">1.00x</div>
+        <button onclick="startCrash()">Start</button>
+        <button id="crash-cashout" onclick="cashoutCrash()">Cashout</button>
+        <div id="crash-status"></div>
+      </section>
+      <section id="screen-upgrade" class="screen">
+        <select id="upgrade-from"></select>
+        <select id="upgrade-to"></select>
+        <button onclick="spinUpgrade()">Spin</button>
+        <div id="upgrade-result"></div>
+      </section>
+      <section id="screen-shell" class="screen">
+        <button onclick="shuffleCups()">Shuffle</button>
+        <div style="display:flex;gap:8px;">
+          <button class="cup" onclick="pickCup(0)">Cup 1</button>
+          <button class="cup" onclick="pickCup(1)">Cup 2</button>
+          <button class="cup" onclick="pickCup(2)">Cup 3</button>
+        </div>
+        <div id="shell-result"></div>
+      </section>
+      <section id="screen-wallet" class="screen">
+        <div id="wallet"></div>
+        <button id="wd-btn" onclick="submitWithdraw()">Withdraw</button>
+        <button id="wd-freebets-btn" disabled>Withdraw Freebets</button>
+      </section>
       <section id="screen-deposit" class="screen">
-        <input id="dep-amount" type="number" title="amount RUB" />
-        <button id="dep-btn">Create SBP Payment</button>
+        <input id="dep-amount" type="number" value="100" />
+        <div id="deposit-methods"></div>
         <div id="qr"></div>
-        <button id="manual-claim">I paid</button>
+        <div id="dep-status"></div>
       </section>
       <section id="screen-withdraw" class="screen">
-        <input id="wd-amount" type="number" title="amount" />
-        <input id="wd-region" title="region" />
-        <button id="wd-btn">Withdraw</button>
+        <input id="wd-amount" type="number" />
+        <input id="wd-region" />
+        <div>Min: <span id="wd-min"></span> Fee: <span id="wd-fee"></span>% Hold: <span id="wd-hold"></span>d</div>
+        <button onclick="submitWithdraw()">Withdraw</button>
         <div id="wd-result"></div>
+        <div id="wd-status"></div>
       </section>
-      <section id="screen-referral" class="screen"><div id="ref-link"></div></section>
     </main>
   </div>
+  <script src="js/api.js"></script>
+  <script src="js/wallet.js"></script>
+  <script src="js/games/mines.js"></script>
+  <script src="js/games/crash.js"></script>
+  <script src="js/games/upgrade.js"></script>
+  <script src="js/games/shell.js"></script>
+  <script src="js/deposit.js"></script>
+  <script src="js/withdraw.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
