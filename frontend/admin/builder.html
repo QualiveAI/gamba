@@ -4,22 +4,39 @@
   <meta charset="UTF-8" />
   <title>Case Builder</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    .disabled { opacity: 0.5; pointer-events: none; }
+    .red { color: red; }
+    .green { color: green; }
+    .badge { padding: 2px 6px; border-radius: 4px; background: #eee; }
+    .badge.draft { background: #fff3cd; }
+    .badge.published { background: #d4edda; }
+    .error-banner { background: #f8d7da; color: #721c24; padding: 8px; margin: 8px 0; display:none; }
+    .immutable-banner { background: #f8d7da; color: #721c24; padding: 8px; margin: 8px 0; display:none; }
+  </style>
 </head>
 <body>
   <div id="app">
     <h1>Case Builder</h1>
     <div id="case-list"></div>
-    <div id="editor">
+    <button id="new-case">New case</button>
+    <div id="editor" style="display:none;">
       <input id="title" placeholder="title" />
+      <input id="slug" placeholder="slug" />
       <select id="game"><option value="cases">cases</option></select>
       <select id="currency"><option value="units">units</option><option value="freebets">freebets</option></select>
       <input id="artwork" type="file" />
       <div id="prizes"></div>
       <button id="add-prize">Add prize</button>
+      <div id="weight-total">0 / 10000</div>
       <div id="rtp-panel"></div>
-      <button id="publish">Publish</button>
+      <input id="confirm-input" placeholder="Type PUBLISH v1" />
+      <button id="publish" disabled>Publish</button>
+      <div id="error-banner" class="error-banner"></div>
+      <div id="immutable-banner" class="immutable-banner">Immutable version</div>
     </div>
+    <div id="version-history"></div>
   </div>
-  <script src="js/admin_builder.js"></script>
+  <script src="../js/admin_builder.js"></script>
 </body>
 </html>
