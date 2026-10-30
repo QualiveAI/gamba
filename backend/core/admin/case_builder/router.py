@@ -53,6 +53,12 @@ async def patch_case(case_id: int, payload: dict, admin=Depends(require_admin)):
         ).fetchone()
         if row is None or row["status"] != "draft":
             raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
+        # also check if any version is published
+        pub = await (
+            await conn.execute("SELECT COUNT(*) AS c FROM case_versions WHERE case_id = %s AND published_at IS NOT NULL", (case_id,))
+        ).fetchone()
+        if pub and pub["c"] > 0:
+            raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
         await conn.execute(
             "UPDATE case_definitions SET title = COALESCE(%s, title), description = COALESCE(%s, description) WHERE id = %s AND status = 'draft'",  # noqa: E501
             (payload.get("title"), payload.get("description"), case_id),

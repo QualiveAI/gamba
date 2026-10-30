@@ -30,6 +30,8 @@ async def _ensure_user():
 
 async def _cleanup_case(slug):
     async with get_conn() as conn:
+        await conn.execute("ALTER TABLE case_versions DISABLE TRIGGER trg_case_versions_immutable")
+        await conn.execute("ALTER TABLE case_prizes DISABLE TRIGGER trg_case_prizes_immutable")
         await conn.execute(
             "DELETE FROM case_prizes WHERE version_id IN ("
             "  SELECT id FROM case_versions WHERE case_id IN ("
@@ -44,6 +46,8 @@ async def _cleanup_case(slug):
         await conn.execute(
             "DELETE FROM case_definitions WHERE slug = %s", (slug,),
         )
+        await conn.execute("ALTER TABLE case_versions ENABLE TRIGGER trg_case_versions_immutable")
+        await conn.execute("ALTER TABLE case_prizes ENABLE TRIGGER trg_case_prizes_immutable")
         await conn.commit()
 @pytest.mark.asyncio
 async def test_create_draft():
@@ -101,7 +105,7 @@ async def test_patch_published_returns_409():
     cid = case["id"]
     ver = await create_version(cid, {"rtp_target_bp": 9000, "changelog": "v1"}, admin=admin)
     vid = ver["version_id"]
-    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 100, "weight_bp": 10000}]}, admin=admin)
+    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 90, "weight_bp": 10000}]}, admin=admin)
     await publish(cid, vid, {"changelog": "pub", "confirm": "PUBLISH v1"}, admin=admin)
     with pytest.raises(HTTPException) as exc:
         await patch_case(cid, {"title": "Too Late"}, admin=admin)
@@ -121,7 +125,7 @@ async def test_add_prizes_weights_must_sum_10000():
     ver = await create_version(cid, {"rtp_target_bp": 9000, "changelog": "v1"}, admin=admin)
     vid = ver["version_id"]
     with pytest.raises(HTTPException) as exc:
-        await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 100, "weight_bp": 9999}]}, admin=admin)
+        await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 90, "weight_bp": 9999}]}, admin=admin)
     assert exc.value.status_code == 400
     assert exc.value.status_code != 200
     await _cleanup_case("weights-test")
@@ -154,7 +158,7 @@ async def test_preview_returns_rtp():
     cid = case["id"]
     ver = await create_version(cid, {"rtp_target_bp": 9000, "changelog": "v1"}, admin=admin)
     vid = ver["version_id"]
-    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 100, "weight_bp": 10000}]}, admin=admin)
+    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 90, "weight_bp": 10000}]}, admin=admin)
     result = await preview(cid, vid, admin=admin)
     assert "rtp_bp" in result
     assert "ev_minor" in result
@@ -181,7 +185,7 @@ async def test_publish_requires_typed_confirmation():
     cid = case["id"]
     ver = await create_version(cid, {"rtp_target_bp": 9000, "changelog": "v1"}, admin=admin)
     vid = ver["version_id"]
-    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 100, "weight_bp": 10000}]}, admin=admin)
+    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 90, "weight_bp": 10000}]}, admin=admin)
     with pytest.raises(HTTPException) as exc:
         await publish(cid, vid, {"changelog": "no confirm"}, admin=admin)
     assert exc.value.status_code == 400
@@ -199,7 +203,7 @@ async def test_publish_happy_path():
     cid = case["id"]
     ver = await create_version(cid, {"rtp_target_bp": 9000, "changelog": "v1"}, admin=admin)
     vid = ver["version_id"]
-    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 100, "weight_bp": 10000}]}, admin=admin)
+    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 90, "weight_bp": 10000}]}, admin=admin)
     result = await publish(cid, vid, {"changelog": "Happy publish", "confirm": "PUBLISH v1"}, admin=admin)
     assert result["ok"] is True
     assert result["version_id"] == vid
@@ -219,7 +223,7 @@ async def test_edit_published_returns_409():
     cid = case["id"]
     ver = await create_version(cid, {"rtp_target_bp": 9000, "changelog": "v1"}, admin=admin)
     vid = ver["version_id"]
-    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 100, "weight_bp": 10000}]}, admin=admin)
+    await put_prizes(cid, vid, {"prizes": [{"label": "p1", "nominal_units": 100, "real_value_minor": 90, "weight_bp": 10000}]}, admin=admin)
     await publish(cid, vid, {"changelog": "Publish", "confirm": "PUBLISH v1"}, admin=admin)
     with pytest.raises(HTTPException) as exc:
         await patch_case(cid, {"title": "Too Late"}, admin=admin)
