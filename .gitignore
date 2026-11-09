@@ -20,7 +20,6 @@ venv/
 *.pyo
 *.egg-info/
 backups/
-media/
 *.dump
 *.db
 *.sqlite
