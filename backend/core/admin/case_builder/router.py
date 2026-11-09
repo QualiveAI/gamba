@@ -55,7 +55,11 @@ async def patch_case(case_id: int, payload: dict, admin=Depends(require_admin)):
             raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
         # also check if any version is published
         pub = await (
-            await conn.execute("SELECT COUNT(*) AS c FROM case_versions WHERE case_id = %s AND published_at IS NOT NULL", (case_id,))
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM case_versions "
+                "WHERE case_id = %s AND published_at IS NOT NULL",
+                (case_id,),
+            )
         ).fetchone()
         if pub and pub["c"] > 0:
             raise HTTPException(status_code=409, detail="ImmutableVersion")  # noqa: B904
@@ -109,6 +113,7 @@ async def put_prizes(case_id: int, vid: int, payload: dict, admin=Depends(requir
         currency = cdef["currency"] if cdef else "units"
         # validate
         from core.catalog.rtp import validate_catalog
+
         report = validate_catalog(prizes, currency, 9000)
         if not report["valid"]:
             raise HTTPException(status_code=400, detail=report)  # noqa: B904
@@ -145,7 +150,11 @@ async def preview(case_id: int, vid: int, admin=Depends(require_admin)):  # noqa
             )
         ).fetchall()
         report = validate_catalog([dict(p) for p in prizes], "units", vrow["rtp_target_bp"])
-    return {"rtp_bp": report["rtp_bp"], "ev_minor": report["ev_minor"], "warnings": report["warnings"]}
+    return {
+        "rtp_bp": report["rtp_bp"],
+        "ev_minor": report["ev_minor"],
+        "warnings": report["warnings"],
+    }
 
 
 @router.post("/{case_id}/versions/{vid}/publish")

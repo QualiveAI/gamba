@@ -6,11 +6,16 @@ from core.contracts.game import (
     PrizeSpec,
 )
 from core.registry.registry import registry
-from core.prizes.giftcard_pool import GiftcardPoolChannel
 
 
 class RobloxAdapter:
-    MANIFEST = {"key": "roblox", "type": "game", "geo": None, "version": "1", "enabled_env": None}
+    MANIFEST = {
+        "key": "roblox",
+        "type": "game",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     game_key = "roblox"
     display_name = "Roblox"
     supported_currencies = ["units"]
@@ -23,11 +28,13 @@ class RobloxAdapter:
             self._load_prizes_from_db(conn)
 
     def _load_prizes_from_db(self, conn):
-        import json
 
         async def _run():
             async with conn.cursor() as cur:
-                await cur.execute("SELECT id, code, nominal_units, region FROM gift_codes WHERE status = 'available'")
+                await cur.execute(
+                    "SELECT id, code, nominal_units, region FROM gift_codes "
+                "WHERE status = 'available'"
+                )
                 rows = await cur.fetchall()
             return [{"id": r[0], "code": r[1], "nominal_units": r[2], "region": r[3]} for r in rows]
 
@@ -41,7 +48,12 @@ class RobloxAdapter:
         if self.prizes is None:
             return []
         return [
-            PrizeSpec(p["code"], p["name"] if hasattr(p, "get") else p.get("code", "unknown"), p["nominal_units"], p.get("region"))
+            PrizeSpec(
+                p["code"],
+                p["name"] if hasattr(p, "get") else p.get("code", "unknown"),
+                p["nominal_units"],
+                p.get("region"),
+            )
             for p in self.prizes
         ]
 

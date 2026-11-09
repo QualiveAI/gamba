@@ -12,6 +12,20 @@ class GeoMeta(BaseModel):
     methods: list[str]
 
 
+class TenantBrand(BaseModel):
+    name: str
+    logo_url: str
+    primary_color: str
+
+
+class TenantMeta(BaseModel):
+    tenant: str
+    brand: TenantBrand
+    domains: dict
+    geos: list[str]
+    games: list[str]
+
+
 class DepositRequest(BaseModel):
     rail: str
     amount_minor: int
@@ -21,6 +35,8 @@ class DepositRequest(BaseModel):
 class DepositResponse(BaseModel):
     intent_id: str
     client_payload: dict
+    fee_minor: int = 0
+    amount_gross_minor: int = 0
 
 
 class WebhookResponse(BaseModel):

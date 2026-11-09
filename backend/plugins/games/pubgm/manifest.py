@@ -1,1 +1,1 @@
-{"key": "pubgm", "type": "game", "contract_version": 1, "enabled_env": "PUBGM_ENABLED"}
+{"key": "pubgm", "type": "game", "contract_version": 1, "enabled_env": "PUBGM_ENABLED"}  # noqa: B018

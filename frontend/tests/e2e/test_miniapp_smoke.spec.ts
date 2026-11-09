@@ -35,14 +35,14 @@ test("mines_reveal_and_cashout", async ({ page }) => {
   await page.route("**/auth/telegram", (route) =>
     route.fulfill({ json: { access_token: "test-jwt" } })
   );
-  await page.route("**/games/mines/session", (route) =>
-    route.fulfill({ json: { session_id: "s1" } })
+  await page.route("**/games/mines/start", (route) =>
+    route.fulfill({ json: { session_id: 1, grid_size: 25, mine_count: 3 } })
   );
-  await page.route("**/games/mines/session/s1/reveal", (route) =>
-    route.fulfill({ json: { hit_mine: false, multiplier: 1.5 } })
+  await page.route("**/games/mines/reveal", (route) =>
+    route.fulfill({ json: { hit_mine: false, revealed: 1, bias_applied: false } })
   );
-  await page.route("**/games/mines/session/s1/cashout", (route) =>
-    route.fulfill({ json: { payout: 150 } })
+  await page.route("**/games/mines/cashout*", (route) =>
+    route.fulfill({ json: { payout: 150, revealed: 1 } })
   );
   await page.goto("http://localhost:8000");
   await page.click('[data-screen="mines"]');
@@ -54,7 +54,28 @@ test("deposit_pix_qr_rendered", async ({ page }) => {
     route.fulfill({ json: { access_token: "test-jwt" } })
   );
   await page.route("**/meta/geos", (route) =>
-    route.fulfill({ json: { methods: [{ name: "PIX", method: "pix" }] } })
+    route.fulfill({ json: [{ geo: "BR", methods: ["card", "crypto"] }] })
+  );
+  await page.route("**/meta/tenant", (route) =>
+    route.fulfill({
+      json: {
+        tenant: "default",
+        brand: { name: "ROBLOXWINDROP", logo_url: "", primary_color: "#c8102e" },
+        domains: {},
+        geos: ["BR"],
+        games: ["roblox"],
+      },
+    })
+  );
+  await page.route("**/deposits", (route) =>
+    route.fulfill({
+      json: {
+        intent_id: "i1",
+        client_payload: { payment_url: "https://pay.example/x", fee_minor: 40 },
+        fee_minor: 40,
+        amount_gross_minor: 1040,
+      },
+    })
   );
   await page.goto("http://localhost:8000");
   await page.click('[data-screen="deposit"]');

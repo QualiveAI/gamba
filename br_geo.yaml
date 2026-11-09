@@ -1,0 +1,6 @@
+geo: "BR"
+rails: ["pix_br"]
+min_deposit_minor: 1
+max_deposit_minor: 100000000
+currency_display: "BRL"
+kyc: "none"

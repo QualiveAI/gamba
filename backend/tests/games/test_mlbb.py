@@ -1,8 +1,9 @@
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
 
-from plugins.games.mlbb.adapter import MlbbAdapter
+import pytest
+
 from core.ops.exceptions import UnsupportedRegion
+from plugins.games.mlbb.adapter import MlbbAdapter
 
 
 @pytest.mark.asyncio

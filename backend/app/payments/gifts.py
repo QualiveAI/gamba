@@ -21,7 +21,8 @@ async def handle_gift(conn, user_id: int, gift_id: str):
     credited = int(float(row["price_rub"]) * 0.9)
     await post_entry(conn, user_id, "units", credited, "deposit_gift", gift_id)
     await conn.execute(
-        "UPDATE gift_conversions SET status = 'credited', credited_units = %s, decided_at = now() WHERE id = %s",
+        "UPDATE gift_conversions SET status = 'credited', "
+        "credited_units = %s, decided_at = now() WHERE id = %s",
         (credited, row["id"]),
     )
     from app.analytics.events import track

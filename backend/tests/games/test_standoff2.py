@@ -1,6 +1,6 @@
-import math
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from plugins.games.standoff2.adapter import Standoff2Adapter
 
@@ -23,7 +23,6 @@ def test_gold_price_ceil():
 
 
 def test_no_direct_supplier_call():
-    from unittest.mock import MagicMock
     adapter = Standoff2Adapter()
     mock_supplier = MagicMock()
     # Simulate that a supplier exists but is never invoked

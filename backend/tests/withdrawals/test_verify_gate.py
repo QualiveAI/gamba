@@ -57,6 +57,7 @@ async def _setup(conn):
     await conn.commit()
     return uid, wid, code_id
 
+
 async def test_happy_issued():
     async with get_conn() as conn:
         uid, wid, code_id = await _setup(conn)
@@ -81,6 +82,7 @@ async def test_happy_issued():
         assert row["status"] == "issued"
         assert row["status"] != "manual_review"
         assert sup.calls == 1
+
 
 async def test_mismatch_manual_review():
     async with get_conn() as conn:
@@ -108,6 +110,7 @@ async def test_mismatch_manual_review():
         assert row["status"] == "manual_review"
         assert row["status"] != "issued"
 
+
 async def test_deferred_pending_supplier():
     async with get_conn() as conn:
         uid, wid, code_id = await _setup(conn)
@@ -133,6 +136,7 @@ async def test_deferred_pending_supplier():
         assert row["status"] == "pending_supplier"
         assert row["status"] != "issued"
 
+
 async def test_not_activated_deferred():
     async with get_conn() as conn:
         uid, wid, code_id = await _setup(conn)
@@ -155,6 +159,7 @@ async def test_not_activated_deferred():
             await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
         ).fetchone()
         assert row["status"] != "issued"
+
 
 async def test_timeout_manual_review():
     async with get_conn() as conn:
@@ -193,6 +198,7 @@ def test_no_stub_guard():
     src = inspect.getsource(s.verify_delivery)
     assert 'return {"verified": True' not in src
     assert "raise SettlementMismatch" in src or "SettlementMismatch(" in src  # noqa: B904
+
 
 async def test_fee_semantics_happy():
     async with get_conn() as conn:
@@ -268,6 +274,7 @@ async def test_fee_semantics_happy():
         assert row2["status"] == "manual_review"
         assert row2["status"] != "issued"
 
+
 async def test_supplier_down_deferred():
     async with get_conn() as conn:
         uid, wid, code_id = await _setup(conn)
@@ -333,4 +340,3 @@ async def test_supplier_bug_propagates():
         assert row["status"] == "approved"
         assert row["status"] != "pending_supplier"
         assert row["status"] != "issued"
-

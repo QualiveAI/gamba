@@ -2,9 +2,9 @@ import pytest
 
 from core.delivery.errors import DeliveryDeferred
 from core.delivery.supplier_client import (
-    purchase_with_fallback,
-    SupplierDown,
     DeliveryCheck,
+    SupplierDown,
+    purchase_with_fallback,
 )
 from core.registry.registry import registry
 
@@ -26,13 +26,27 @@ class FakeSupplier:
 async def test_fallback_to_second_supplier():
     registry._items.clear()
     bad = FakeSupplier(exc=SupplierDown())
-    bad.MANIFEST = {"key": "primary", "type": "supplier", "geo": None, "version": "1", "enabled_env": None}
+    bad.MANIFEST = {
+        "key": "primary",
+        "type": "supplier",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     good = FakeSupplier(result=type("R", (), {"status": "activated", "delivered_units": 42})())
-    good.MANIFEST = {"key": "fallback", "type": "supplier", "geo": None, "version": "1", "enabled_env": None}
+    good.MANIFEST = {
+        "key": "fallback",
+        "type": "supplier",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     registry.register(bad)
     registry.register(good)
 
-    res = await purchase_with_fallback(suppliers=[bad, good], code="X", brand="default", region="US")
+    res = await purchase_with_fallback(
+        suppliers=[bad, good], code="X", brand="default", region="US"
+    )
     assert isinstance(res, DeliveryCheck)
     assert res.status == "activated"
     assert res.delivered_units == 42
@@ -45,9 +59,21 @@ async def test_fallback_to_second_supplier():
 async def test_all_suppliers_down_raises_deferred():
     registry._items.clear()
     bad1 = FakeSupplier(exc=SupplierDown())
-    bad1.MANIFEST = {"key": "s1", "type": "supplier", "geo": None, "version": "1", "enabled_env": None}
+    bad1.MANIFEST = {
+        "key": "s1",
+        "type": "supplier",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     bad2 = FakeSupplier(exc=SupplierDown())
-    bad2.MANIFEST = {"key": "s2", "type": "supplier", "geo": None, "version": "1", "enabled_env": None}
+    bad2.MANIFEST = {
+        "key": "s2",
+        "type": "supplier",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     registry.register(bad1)
     registry.register(bad2)
 
@@ -59,9 +85,21 @@ async def test_all_suppliers_down_raises_deferred():
 async def test_unexpected_error_does_not_fallback():
     registry._items.clear()
     bad = FakeSupplier(exc=KeyError("boom"))
-    bad.MANIFEST = {"key": "s1", "type": "supplier", "geo": None, "version": "1", "enabled_env": None}
+    bad.MANIFEST = {
+        "key": "s1",
+        "type": "supplier",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     good = FakeSupplier(result=type("R", (), {"status": "activated", "delivered_units": 1})())
-    good.MANIFEST = {"key": "s2", "type": "supplier", "geo": None, "version": "1", "enabled_env": None}
+    good.MANIFEST = {
+        "key": "s2",
+        "type": "supplier",
+        "geo": None,
+        "version": "1",
+        "enabled_env": None,
+    }
     registry.register(bad)
     registry.register(good)
 

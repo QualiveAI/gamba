@@ -36,4 +36,10 @@ def validate_catalog(prizes, currency, rtp_target_bp, tolerance_bp=50):
         rtp_bp = int(ev * 100)
         if abs(rtp_bp - rtp_target_bp) > tolerance_bp:
             errors.append("rtp drift too high")
-    return {"errors": errors, "warnings": warnings, "valid": len(errors) == 0, "rtp_bp": rtp_bp, "ev_minor": ev_minor}
+    return {
+        "errors": errors,
+        "warnings": warnings,
+        "valid": len(errors) == 0,
+        "rtp_bp": rtp_bp,
+        "ev_minor": ev_minor,
+    }

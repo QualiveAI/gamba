@@ -1,6 +1,7 @@
-import pytest
-import uuid
 import asyncio
+import uuid
+
+import pytest
 
 from app.db import get_conn
 from core.payments.events import ingest, process_pending
@@ -15,7 +16,9 @@ async def _user():
             (tg,),
         )
         await conn.commit()
-        row = await (await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))).fetchone()
+        row = await (
+            await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))
+        ).fetchone()
     return row["id"]
 
 
@@ -32,15 +35,25 @@ async def test_poll_webhook_race():
     assert eid1 == eid2
 
     async with get_conn() as conn:
-        await conn.execute("UPDATE payment_events SET intent_id = %s WHERE id = %s", (intent.id, eid1))
+        await conn.execute(
+            "UPDATE payment_events SET intent_id = %s WHERE id = %s", (intent.id, eid1)
+        )
         await conn.commit()
 
     await process_pending()
 
     async with get_conn() as conn:
-        cnt = await (await conn.execute("SELECT COUNT(*) AS c FROM payment_events WHERE provider_event_id = 'evt-2'")).fetchone()
+        cnt = await (
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM payment_events WHERE provider_event_id = 'evt-2'"
+            )
+        ).fetchone()
     assert cnt["c"] == 1
 
     async with get_conn() as conn:
-        lcnt = await (await conn.execute("SELECT COUNT(*) AS c FROM ledger_entries WHERE ref_id = 'mock:evt-2'")).fetchone()
+        lcnt = await (
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM ledger_entries WHERE ref_id = 'mock:evt-2'"
+            )
+        ).fetchone()
     assert lcnt["c"] == 1

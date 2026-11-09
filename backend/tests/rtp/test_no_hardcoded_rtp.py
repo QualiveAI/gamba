@@ -1,11 +1,11 @@
-﻿import inspect
+import inspect
 
 import pytest
 
-from plugins.games.mines.plugin import MinesAdapter
 from plugins.games.crash.plugin import CrashAdapter
-from plugins.games.upgrade.plugin import UpgradeAdapter
+from plugins.games.mines.plugin import MinesAdapter
 from plugins.games.shell.plugin import ShellAdapter
+from plugins.games.upgrade.plugin import UpgradeAdapter
 
 
 @pytest.mark.parametrize("adapter_cls", [MinesAdapter, CrashAdapter, UpgradeAdapter, ShellAdapter])

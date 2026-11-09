@@ -1,35 +1,32 @@
-let shellBallPosition = 0;
-
-function shuffleCups() {
-  const cups = document.querySelectorAll(".cup");
-  cups.forEach((c) => c.classList.add("shuffling"));
-  setTimeout(() => {
-    shellBallPosition = Math.floor(Math.random() * 3);
-    cups.forEach((c, i) => {
-      c.classList.remove("shuffling");
-      c.classList.remove("has-ball");
-      if (i === shellBallPosition) c.classList.add("has-ball");
-    });
-  }, 1000);
-}
+// Shell: POST /games/shell {bet, guess, client_seed} -> {ball, guess, win}.
 
 async function pickCup(index) {
+  const bet = parseInt(document.getElementById("shell-bet").value, 10) || 100;
   try {
-    const res = await window.api("/games/shell/pick", {
+    const res = await window.api("/games/shell", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cup: index }),
+      body: JSON.stringify({ bet, guess: index, client_seed: crypto.randomUUID() }),
     });
     const cups = document.querySelectorAll(".cup");
     cups.forEach((c, i) => {
-      if (i === (res.ball_position || shellBallPosition)) c.classList.add("correct");
+      c.classList.remove("correct", "wrong", "has-ball", "reveal");
+      if (i === res.ball) { c.classList.add("correct", "has-ball", "reveal"); }
       if (i === index && !res.win) c.classList.add("wrong");
     });
     const resultEl = document.getElementById("shell-result");
     if (resultEl) resultEl.textContent = res.win ? "WIN!" : "LOSE";
+    if (window.showReaction)
+      window.showReaction("shell-reaction", res.win ? "showoff" : "tilt");
   } catch (e) {
     console.error(e);
   }
+}
+
+function shuffleCups() {
+  const cups = document.querySelectorAll(".cup");
+  cups.forEach((c) => c.classList.add("shuffling"));
+  setTimeout(() => cups.forEach((c) => c.classList.remove("shuffling")), 800);
 }
 
 window.shuffleCups = shuffleCups;

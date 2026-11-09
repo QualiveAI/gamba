@@ -1,8 +1,6 @@
 import hashlib
 import hmac
-import json
 import time
-from typing import Optional
 
 import httpx
 
@@ -31,7 +29,9 @@ class GowdLatamAdapter:
     methods = ["pix", "spei"]
     refund_supported = False
 
-    def create_payment(self, user_id: int, amount_minor: int, currency: str, idempotency_key: str) -> PaymentIntent:
+    def create_payment(
+        self, user_id: int, amount_minor: int, currency: str, idempotency_key: str
+    ) -> PaymentIntent:
         """Create a payment via GOWD API."""
         gowd_url = "https://api.gowd.com"  # placeholder; real URL from env
         gowd_key = "test-key"  # placeholder; real key from env
@@ -44,12 +44,12 @@ class GowdLatamAdapter:
             "currency": currency,
             "method": method,
             "external_id": idempotency_key,
-            "callback_url": f"https://api.caseplatform.com/webhook/gowd_latam",
+            "callback_url": "https://api.caseplatform.com/webhook/gowd_latam",
         }
 
         attempts = 0
         max_attempts = 2
-        last_error: Optional[httpx.HTTPError] = None
+        last_error: httpx.HTTPError | None = None
 
         while attempts < max_attempts:
             try:
@@ -81,7 +81,11 @@ class GowdLatamAdapter:
                         rail=self.rail_key,
                         amount_minor=amount_minor,
                         currency=currency,
-                        client_payload={"clabe": clabe, "reference": reference, "provider_ref": provider_ref},
+                        client_payload={
+                            "clabe": clabe,
+                            "reference": reference,
+                            "provider_ref": provider_ref,
+                        },
                     )
                 else:
                     provider_ref = data.get("id", "")
@@ -96,7 +100,7 @@ class GowdLatamAdapter:
                 last_error = e
                 attempts += 1
                 if attempts < max_attempts:
-                    time.sleep(2 ** attempts)  # backoff
+                    time.sleep(2**attempts)  # backoff
                     continue
                 raise SupplierDown("GOWD timeout after retries") from last_error
 
@@ -127,7 +131,9 @@ class GowdLatamAdapter:
             }
             internal_status = status_map.get(status, "pending")
 
-            return PaymentStatus(intent_id=intent_id, status=internal_status, amount_minor=amount_minor)
+            return PaymentStatus(
+                intent_id=intent_id, status=internal_status, amount_minor=amount_minor
+            )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return PaymentStatus(intent_id=intent_id, status="failed", amount_minor=0)

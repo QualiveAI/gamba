@@ -1,8 +1,9 @@
-import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from plugins.games.pubgm.adapter import PubgmAdapter
+import pytest
+
 from core.ops.exceptions import UnsupportedRegion
+from plugins.games.pubgm.adapter import PubgmAdapter
 
 
 @pytest.mark.asyncio

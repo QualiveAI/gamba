@@ -1,0 +1,20 @@
+tenant: "br"
+brand:
+  name: "CasePlatform BR"
+  logo_url: ""
+  primary_color: "#101014"
+domains:
+  frontend: ""
+  api: ""
+games:
+  - game_key: "roblox"
+    enabled: true
+    rtp_profile: {}
+geos:
+  - geo: "BR"
+    enabled: true
+    rails: ["pix_br"]
+    currency_display: "BRL"
+    kyc: "none"
+    min_deposit_minor: 1
+    max_deposit_minor: 100000000

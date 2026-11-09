@@ -3,6 +3,8 @@ let jwtToken = sessionStorage.getItem("jwt") || "";
 const tg = (window.Telegram && window.Telegram.WebApp) || { ready() {}, expand() {}, initData: "" };
 tg.ready(); tg.expand();
 
+let reAuthAttempted = false;
+
 async function api(path, options = {}) {
   if (!jwtToken) {
     const res = await fetch(API_BASE + "/auth/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ init_data: tg.initData || "" }) });
@@ -13,10 +15,22 @@ async function api(path, options = {}) {
   const headers = Object.assign({ "Authorization": "Bearer " + jwtToken }, options.headers || {});
   const res = await fetch(API_BASE + path, Object.assign({}, options, { headers }));
   if (!res.ok) {
+    if (res.status === 401 && !reAuthAttempted) {
+      reAuthAttempted = true;
+      jwtToken = "";
+      sessionStorage.removeItem("jwt");
+      const newRes = await fetch(API_BASE + "/auth/telegram", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ init_data: tg.initData || "" }) });
+      const newData = await newRes.json();
+      jwtToken = newData.access_token;
+      sessionStorage.setItem("jwt", jwtToken);
+      reAuthAttempted = false;
+      return await fetch(API_BASE + path, Object.assign({}, options, { headers })).then(r => r.json());
+    }
     const err = new Error(await res.text());
     err.status = res.status;
     throw err;
   }
+  reAuthAttempted = false;
   return res.json();
 }
 
@@ -28,10 +42,12 @@ let currentVersionNo = 1;
 function renderRtp() {
   const total = prizes.reduce((a, p) => a + (p.weight || 0), 0);
   const ev = total > 0 ? prizes.reduce((a, p) => a + (p.real_value_minor || 0) * (p.weight || 0), 0) / total : 0;
-  const rtp = Math.round(ev * 100);
+  // bet_minor: 1 unit = 100 minor units (default; can be overridden from case metadata)
+  const bet_minor = 100;
+  const rtp_bp = bet_minor > 0 ? Math.round((ev / bet_minor) * 10000) : 0;
   const target = 9000;
   const weightOk = total === 10000;
-  const rtpOk = Math.abs(rtp - target) <= 50;
+  const rtpOk = Math.abs(rtp_bp - target) <= 50;
 
   const weightEl = document.getElementById("weight-total");
   if (weightEl) {
@@ -40,7 +56,8 @@ function renderRtp() {
   }
   const rtpEl = document.getElementById("rtp-panel");
   if (rtpEl) {
-    rtpEl.textContent = `RTP: ${rtp} (target ${target}) ${rtpOk ? "OK" : "DRIFT"}`;
+    const warning = bet_minor <= 0 ? "set bet to see RTP" : "";
+    rtpEl.textContent = `EV: ${ev.toFixed(2)} minor, RTP: ${rtp_bp} bp / target ${target} bp ${warning}`;
     rtpEl.className = rtpOk ? "green" : "red";
   }
 

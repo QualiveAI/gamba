@@ -1,7 +1,7 @@
 import pytest
 
 from app.db import get_conn
-from core.config.versioning import create_version, activate_config, rollback, get_active_config
+from core.config.versioning import activate_config, create_version, get_active_config, rollback
 
 
 @pytest.mark.asyncio
@@ -57,10 +57,12 @@ async def test_pinned_flag_persisted():
         await conn.execute("DELETE FROM tenant_config_versions WHERE tenant = %s", (tenant,))
         await conn.commit()
     v = await create_version(tenant, {"p": True}, pinned=True)
-    versions = await list_versions(tenant) if False else None
     async with get_conn() as conn:
-        row = await (await conn.execute(
-            "SELECT pinned FROM tenant_config_versions WHERE tenant = %s AND version = %s", (tenant, v)
-        )).fetchone()
+        row = await (
+            await conn.execute(
+                "SELECT pinned FROM tenant_config_versions WHERE tenant = %s AND version = %s",
+                (tenant, v),
+            )
+        ).fetchone()
     assert row["pinned"] is True
-    assert row["pinned"] != False
+    assert row["pinned"]

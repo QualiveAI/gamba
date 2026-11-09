@@ -1,7 +1,6 @@
-﻿import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from core.engine.rtp.engine import RtpDecision
 from plugins.games.shell.plugin import ShellAdapter
@@ -38,4 +37,3 @@ async def test_override_ignored_for_non_admin():
         sessions = [await adapter.open_session(user, 100, {}) for _ in range(1000)]
     assert all(s["admin_override"] is False for s in sessions)
     assert all(s["rtp_effective"] == 0.80 for s in sessions)
-

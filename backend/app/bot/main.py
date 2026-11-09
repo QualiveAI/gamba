@@ -33,10 +33,34 @@ async def cmd_start(message):
             pass
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Open App", web_app=WebAppInfo(url=WEBAPP_URL))]
+            [
+                InlineKeyboardButton(
+                    text="🎮 Открыть ROBLOXWINDROP", web_app=WebAppInfo(url=WEBAPP_URL)
+                )
+            ]
         ]
     )
-    await message.answer("Welcome", reply_markup=kb)
+    await message.answer(
+        "🐒 Добро пожаловать в WINDROP!\n\n"
+        "Открывай кейсы, играй в Mines, Crash, Upgrade и Shell.\n"
+        "Депозит и вывод — прямо в мини-приложении.\n\n"
+        "Кнопка ниже откроет игру.",
+        reply_markup=kb,
+    )
+
+
+@dp.message(Command("menu"))
+async def cmd_menu(message):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))],
+            [InlineKeyboardButton(
+                text="💰 Пополнить",
+                web_app=WebAppInfo(url=f"{WEBAPP_URL}#deposit"),
+            )],
+        ]
+    )
+    await message.answer("Меню WINDROP:", reply_markup=kb)
 
 
 @dp.message(Command("balance"))
@@ -44,25 +68,29 @@ async def cmd_balance(message):
     async with get_conn() as conn:
         row = await (
             await conn.execute(
-                "SELECT balance_units FROM users WHERE telegram_id = %s", (message.from_user.id,)
+                "SELECT balance_units, balance_freebets FROM users WHERE telegram_id = %s",
+                (message.from_user.id,),
             )
         ).fetchone()
     bal = row["balance_units"] if row else 0
-    await message.answer(f"Balance: {bal}")
+    freebets = 0
+    if row:
+        freebets = row.get("balance_freebets", 0) or 0
+    await message.answer(f"💰 Баланс: {bal} юнитов\n🎁 Фрибеты: {freebets}")
 
 
 @dp.message(Command("withdraw"))
 async def cmd_withdraw(message):
-    url = WEBAPP_URL + "?screen=withdraw"
+    url = f"{WEBAPP_URL}#withdraw"
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Withdraw", web_app=WebAppInfo(url=url))]]
+        inline_keyboard=[[InlineKeyboardButton(text="🏦 Вывести", web_app=WebAppInfo(url=url))]]
     )
-    await message.answer("Withdraw", reply_markup=kb)
+    await message.answer("Вывод средств — в мини-приложении:", reply_markup=kb)
 
 
 @dp.message(Command("support"))
 async def cmd_support(message):
-    await message.answer("Support: @support")
+    await message.answer("Поддержка: @windrop_support")
 
 
 async def main():

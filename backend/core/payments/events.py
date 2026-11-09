@@ -1,10 +1,10 @@
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.db import get_conn
-from core.payments.apply import apply_event, ApplyResult
-from core.payments.intents import create_intent, get_intent, PaymentIntent
+from core.payments.apply import ApplyResult, apply_event
+from core.payments.intents import PaymentIntent, create_intent, get_intent
 
 
 @dataclass
@@ -111,22 +111,23 @@ async def process_pending(limit: int = 100) -> list[dict[str, Any]]:
             result: ApplyResult = await apply_event(conn, event)
             if result.status == "processed":
                 await conn.execute(
-                    "UPDATE payment_intents SET status = 'succeeded', settled_at = now() WHERE id = %s",
+                    "UPDATE payment_intents SET status = 'succeeded', settled_at = now() "
+                    "WHERE id = %s",
                     (intent.id,),
                 )
             elif result.status == "duplicate":
                 await conn.execute(
-                    "UPDATE payment_intents SET status = 'succeeded' WHERE id = %s AND status = 'pending'",
+                    "UPDATE payment_intents SET status = 'succeeded' "
+                    "WHERE id = %s AND status = 'pending'",
                     (intent.id,),
                 )
             await conn.execute(
-                "UPDATE payment_events SET outcome = %s, processed_at = now(), intent_id = %s WHERE id = %s",
+                "UPDATE payment_events SET outcome = %s, processed_at = now(), "
+                "intent_id = %s WHERE id = %s",
                 (result.status, intent.id, event_id),
             )
             await conn.commit()
-            results.append(
-                {"id": event_id, "status": result.status, "credited": result.credited}
-            )
+            results.append({"id": event_id, "status": result.status, "credited": result.credited})
         return results
 
 

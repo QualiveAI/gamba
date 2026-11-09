@@ -1,1 +1,1 @@
-{"key": "standoff2", "type": "game", "contract_version": 1, "enabled_env": None}
+{"key": "standoff2", "type": "game", "contract_version": 1, "enabled_env": None}  # noqa: B018

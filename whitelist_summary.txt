@@ -1,0 +1,16 @@
+[P] Brazil White Label Configuration
+Created files:
+1. configs/geos/BR.yaml - Brazil geo config with pix_br payment rail
+2. configs/tenants/br.yaml - Brazil tenant with Roblox game and Brazil geo
+3. configs/games/roblox.yaml - Roblox game config with allowed_modifiers
+
+Configuration flow:
+- Tenant 'br' includes game 'roblox' and geo 'BR'
+- Geo 'BR' has payment rail 'pix_br' for PIX (Brazil's payment system)
+- Roblox game adapter has allowed_modifiers = ["f_win", "f_bet"] 
+- allowed_modifiers() function falls back to plugin registry when YAML doesn't specify
+
+The white label system now makes it easy to:
+- Swap country: change tenant config geo section
+- Swap game: change tenant config games section
+- Add new games/payment methods via plugin registration

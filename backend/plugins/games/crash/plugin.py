@@ -1,4 +1,4 @@
-﻿import random
+import random
 
 from core.contracts.game import (
     AccountValidation,
@@ -41,9 +41,10 @@ class CrashAdapter:
         base_rtp = float(self.config.get("rtp_base", 0.9))
         decision = await effective_rtp(base_rtp, self.game_key, user, session_ctx)
         roll = random.random()
-        house_edge = float(self.config.get("house_edge_factor", 0.95))
         crash_point = max(1.0, (1.0 / (1.0 - roll)) * decision.rtp_effective)
-        is_admin = user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        is_admin = (
+            user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        )
         session = {
             "crash_point": crash_point,
             "status": "active",

@@ -14,3 +14,20 @@ dist/
 build/
 .DS_Store
 !.env.example
+
+# Local credentials, databases, and generated files
+venv/
+*.pyo
+*.egg-info/
+backups/
+media/
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+*.p12
+*.pfx
+*.key
+temp_vars
+БОТ.txt
+Thumbs.db

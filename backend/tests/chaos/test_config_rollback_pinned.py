@@ -1,6 +1,6 @@
 import pytest
 
-from core.config.versioning import create_version, activate_config, get_active_config
+from core.config.versioning import activate_config, create_version, get_active_config
 
 
 @pytest.mark.asyncio
