@@ -653,7 +653,7 @@ function vProfile() {
  <div class="row"><button class="chip" data-dep="100">+100</button><button class="chip" data-dep="500">+500</button><button class="chip" data-dep="1000">+1000</button><button class="chip" data-dep="5000">+5000</button></div>
  <button class="cta" data-docreate>Depositar</button>
  <div id="dep-status" class="toast"></div><div id="qr"></div></section>
- <section class="card"><div class="card-head"><h2>Sacar</h2><img src="assets/logo.png" alt="WINDROP" class="wd-logo"><span class="pill">mín. 1.000 🪙</span></div>
+ <section class="card"><div class="card-head"><h2>Sacar</h2><img src="assets/logo-small.png" alt="WINDROP" class="wd-logo"><span class="pill">mín. 1.000 🪙</span></div>
  <div class="controls">
   <label>Cartão <select id="wd-card" onchange="window.updateWdPreview()">
    <option value="1000">${brl(15)} — 1.000 🪙</option><option value="2500">${brl(37.5)} — 2.500 🪙</option>
