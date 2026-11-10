@@ -2,6 +2,7 @@
     # Статика мини-аппа WINDROP: /app/* -> ../frontend (префикс срезается)
     handle_path /app/* {
         root * /srv/app
+        header Cache-Control "no-cache"
         try_files {path} /index.html
         file_server
     }

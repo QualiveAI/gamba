@@ -1,4 +1,5 @@
 import secrets
+from types import SimpleNamespace
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -23,10 +24,15 @@ class RobloxCallbackRequest(BaseModel):
 
 @router.post("/telegram")
 async def auth_telegram(body: TelegramAuthRequest):
-    try:
-        tg_user = validate_init_data(body.init_data, settings.bot_token)
-    except AuthError as e:
-        raise HTTPException(status_code=401, detail=str(e))  # noqa: B904
+    if not body.init_data and settings.env != "prod":
+        # Гостевой вход для локальных проверок в обычном браузере (без Telegram).
+        # В prod пустой initData запрещён: там fallback-ветка недостижима.
+        tg_user = SimpleNamespace(id=900001, username="convidado")
+    else:
+        try:
+            tg_user = validate_init_data(body.init_data, settings.bot_token)
+        except AuthError as e:
+            raise HTTPException(status_code=401, detail=str(e))  # noqa: B904
     async with get_conn() as conn:
         row = await (
             await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg_user.id,))

@@ -1,14 +1,13 @@
 // Скриншоты экранов мини-аппа (QA): node shots.mjs из frontend/
 // Живой стек на 8090, QA-токен из Temp. Результат в ../shots/*.png
 import { chromium } from "@playwright/test";
-import { readFileSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 
-const token = readFileSync("C:/Users/sakin/AppData/Local/Temp/qa_token.txt", "utf-8").trim();
 mkdirSync("../shots", { recursive: true });
 
+// Гостевой вход теперь автоматический: пустой initData -> dev-гость на бэкенде
 const b = await chromium.launch();
 const page = await b.newPage({ viewport: { width: 390, height: 844 } });
-await page.addInitScript((t) => sessionStorage.setItem("jwt", t), token);
 await page.goto("http://localhost:8090/app/");
 await page.waitForTimeout(1800);
 
