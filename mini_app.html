@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini-App Games</title>
+    <style>
+        :root { --primary-color: #6366f1; --secondary-color: #8b5cf6; --background: #0f0f23; --card-bg: #1a1a3a; --text-primary: #f8fafc; --text-secondary: #94a3b8; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        .games-grid { display: grid; gap: 15px; }
+        @media (min-width: 480px) { .games-grid { grid-template-columns: repeat(2, 1fr); } }
+        @media (min-width: 768px) { .games-grid { grid-template-columns: repeat(4, 1fr); } }
+        .game-card { background: var(--card-bg); border: 2px solid #3a3a5a; border-radius: 16px; padding: 20px; text-align: center; cursor: pointer; transition: all 0.3s ease; position: relative; overflow: hidden; }
+        .game-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--primary-color), var(--secondary-color)); opacity: 0; transition: opacity 0.3s ease; }
+        .game-card:hover { border-color: var(--primary-color); transform: translateY(-4px); box-shadow: 0 12px 24px rgba(99, 102, 241, 0.3); }
+        .game-card:hover::before { opacity: 1; }
+        .game-card.selected { border-color: var(--primary-color); background: linear-gradient(135deg, #1e1e3a, #0a0a1f); }
+        .game-card.selected::before { opacity: 1; }
+        .game-icon { width: 64px; height: 64px; margin: 0 auto 12px; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5)); transition: transform 0.3s ease; }
+        .game-card:hover .game-icon { transform: scale(1.1); }
+        .game-card.selected .game-icon { filter: drop-shadow(0 0 12px var(--primary-color)); }
+        .game-name { font-size: 14px; margin-top: 8px; color: var(--text-primary); min-height: 20px; }
+        .game-name small { color: var(--text-secondary); font-size: 10px; display: block; margin-top: 2px; }
+        .status-indicator { position: absolute; top: 8px; right: 8px; width: 12px; height: 12px; border: 2px solid var(--primary-color); border-radius: 50%; background: var(--primary-color); opacity: 0; transition: opacity 0.3s ease; }
+        .game-card.selected .status-indicator { opacity: 1; }
+        .placeholder-icon { width: 64px; height: 64px; background: linear-gradient(135deg, #4a90e2, #6366f1); border-radius: 12px; display: flex; align-items: center; justify-content: center; color: white; font-size: 24px; margin: 0 auto 12px; }
+        .crash-icon { background: linear-gradient(135deg, #ff6b6b, #ee5a24); }
+        .mines-icon { background: linear-gradient(135deg, #4ecdc4, #44a08d); }
+        .roblox-icon { background: linear-gradient(135deg, #c41e3a, #f767a7); }
+        .mlbb-icon { background: linear-gradient(135deg, #0057b8, #3b99dq); }
+        .loader { border: 3px solid #3a3a5a; border-top: 3px solid var(--primary-color); border-radius: 50%; width: 20px; height: 20px; margin: 20px auto; animation: spin 1s linear infinite; display: none; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-message { color: #f87171; text-align: center; padding: 20px; border-radius: 8px; margin: 20px 0; display: none; }
+        .error-message.visible { display: block; }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>Mini-App Games</h1>
+            <p>Выберите игру</p>
+        </header>
+        <div class="games-grid" id="gamesGrid"></div>
+        <div class="loader" id="loader"></div>
+        <div class="error-message" id="errorMsg"></div>
+    <script>
+        const games = [
+            { id: 'roblox', name: 'Roblox', icon: '🎮', description: 'Roblox мини-игра' },
+            { id: 'mlbb', name: 'MLBB', icon: '⚽', description: 'Mobile Legends: Bang Bang' },
+            { id: 'crash', name: 'Crash', icon: '💰', description: 'Crash игра' },
+            { id: 'mines', name: 'Mines', icon: '💣', description: 'Mines игра' }
+        ];
+
+        const grid = document.getElementById('gamesGrid');
+
+        games.forEach(game => {
+            const card = document.createElement('div');
+            card.className = 'game-card';
+            card.dataset.id = game.id;
+            card.innerHTML = '<div class="game-icon ' + game.id + '-icon"></div><div class="game-name"><' + game.name + '><small>' + game.description + '</small></div><div class="status-indicator" id="status-' + game.id + '"></div>';
+
+            card.addEventListener('click', () => startGame(game.id));
+            grid.appendChild(card);
+        });
+
+        function startGame(gameId) {
+            const card = document.querySelector('.game-card[data-id="' + gameId + '"]');
+
+            document.querySelectorAll('.game-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('errorMsg').classList.remove('visible');
+
+            setTimeout(() => {
+                document.getElementById('loader').style.display = 'none';
+                console.log('Starting game: ' + gameId);
+                alert('Запуск игры: ' + gameId);
+            }, 1500);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const firstCard = grid.querySelector('.game-card');
+            if (firstCard) firstCard.classList.add('selected');
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+[P] TASK COMPLETE
+
+Fixed allowed_modifiers() in core/engine/rtp/config.py to add plugin registry fallback when YAML config doesn't specify modifiers.
+
+**Problem:** MLBB adapter has `allowed_modifiers = ["f_win", "f_bet"]` but function only read from YAML config (empty key), so modifiers never applied.
+
+**Solution:** Added fallback chain: YAML → plugin registry attribute → empty list.
+
+**Verification:** All 12 game tests pass, full non-db test suite 22/22 passes.
+
+**File modified:** c:\Артём\Бизнес\Ваня\Drop\RB\roblox-case-platform\backend\core\engine\rtp\config.py

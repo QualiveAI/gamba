@@ -1,0 +1,41 @@
+[P] TASK COMPLETE - Brasil White Label Configuration
+
+**Created 3 configuration files for easy country/game swapping:**
+
+1. `configs/geos/BR.yaml` - Brazil geo config with PIX payment rail
+   - geo: "BR"
+   - rails: ["pix_br"]
+   - currency: BRL
+   - min/max deposit settings
+
+2. `configs/tenants/br.yaml` - Brazil tenant config
+   - tenant: "br"
+   - Includes Roblox game (game_key: "roblox")
+   - Includes Brazil geo with pix_br rail
+   - Full brand configuration for Brazil market
+
+3. `configs/games/roblox.yaml` - Roblox game config
+   - game_key: "roblox"
+   - display_name: "Roblox"
+   - rtp_base: 0.90
+   - allowed_modifiers: ["f_win", "f_bet"] (via fallback mechanism)
+   - Unit and withdrawal settings
+
+**White Label Easy Swapping:**
+- **Change country**: Modify `geos` section in tenant YAML
+- **Change game**: Modify `games` section in tenant YAML  
+- **Add new**: Register plugin + create geo config + create tenant config
+- No code redeployment needed - all YAML-based
+
+**Technical Foundation:**
+- Plugin registry pattern: core/registry/registry.py
+- allowed_modifiers() fallback: YAML → plugin registry → []
+- Tenant config loading: core/config/tenants.py
+- Geo config loading: configs/geos/{geo}.yaml
+
+**Files Modified/Created:**
+- Fixed: core/engine/rtp/config.py (allowed_modifiers fallback)
+- Created: configs/geos/BR.yaml
+- Created: configs/tenants/br.yaml  
+- Created: configs/games/roblox.yaml
+- Created: WHITELIST_REPORT.md (documentation)

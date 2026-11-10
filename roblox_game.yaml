@@ -1,0 +1,7 @@
+game_key: "roblox"
+display_name: "Roblox"
+rtp_base: 0.90
+allowed_modifiers: ["f_win", "f_bet"]
+ prize_catalog_path: "configs/games/roblox/prizes.yaml"
+ unit_name: "units"
+ withdraw_min_minor: 15000

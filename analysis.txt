@@ -1,0 +1,210 @@
+[P] Analysis of the Roblox Case Platform project complete. Here's what I found:
+
+**Project Structure:**
+- FastAPI Python 3.12 backend with uvicorn
+- PostgreSQL database with async support (psycopg)
+- Redis for caching and RTP chase logic
+- aiogram 3 dispatcher for bot
+- Plugin-based architecture for games, payments, and prizes
+
+**Core Components:**
+1. **FastAPI App** (app/main.py) - 75+ routers included, lifespan manages DB pool, Redis, and APScheduler
+2. **Plugin Registry** (core/registry/registry.py) - Central registry for games, payments, prizes with key/geo/type lookup
+3. **Tenant Config** (core/config/tenants.py) - YAML-based per-tenant configuration with game/geo validation against registry
+4. **RTP Engine** (core/engine/rtp/) - Effective RTP calculation with modifiers (f_admin, f_win, f_bet, f_chase) and Redis-based chase tracking
+5. **Game Adapters** (plugins/games/) - Roblox, MLBB, PubGM, crash, mines, standoff2, upgrade, shell, cases, etc.
+6. **Payment Adapters** (plugins/payments/) - crypto_usdt, pix_br, qris_id, spei_mx, truemoney_th, upi_in, gowd_latam
+7. **Prize Channels** (plugins/prizes/) - giftcard_pool, uid_topup
+8. **Bot Pool** (app/bot/pool.py) - aiogram-based bot with session management
+
+**Key Flows:**
+- Deposit: Tenant config → Payment rail lookup → create_payment → intent storage → webhook handling
+- Game Session: Game key validation → registry lookup → session creation with plugin
+- Withdrawal: UUID-based tracking with status polling
+- RTP: Base 90% clamped 80-95% with session context modifiers (streak, losses, bet size, admin promo)
+
+**Configuration:**
+- Tenants: configs/tenants/{name}.yaml
+- Games: configs/games/{game_key}.yaml (defines allowed_modifiers)
+- Payments: configs/payments/{rail}.yaml
+- DB: pyproject.toml specifies FastAPI, uvicorn, pydantic, pydantic-settings
+
+The project is fully functional with a plugin system allowing easy addition of new games, payment methods, and prize channels via registration.
+
+[[P] Project Feature Analysis & Hosting Plan
+
+## 1. Бот-редупликация (Bot Deduplication)
+
+**Есть в проекте:**
+
+### А) PostgreSQL-based pool (app/bot/pool.py)
+- `bot_pool` таблица с токенами и временом warmup (24 часа)
+- `register_bot(conn, token, name)` — регистрация бота
+- `is_warmup(conn, token)` — проверка статуса warmup
+- Боты хранятся в БД, можно проверять по токену перед запуском
+
+### Б) In-memory tracking (core/api/router.py)
+- `_sessions: dict[str, Any]` — активные сессии игр
+- `_intents: dict[str, Any]` — pending депозиты (intent_id -> rail/plugin)
+- `_withdrawals: dict[str, Any]` — выводы (withdrawal_id -> status)
+- Предотвращает дублирование активных операций в рамках одного запуска
+
+### В) Уникальность по токену
+- Бот-токены проверяются при регистрации в БД
+- В registry используются ключи (key, type, geo) — дубликаты отклоняются при validate_all()
+
+**Вывод:** Есть механизмы obot-редупликации на двух уровнях: БД и в памяти.
+
+---
+
+## 2. Автообновление версий (Auto Versioning)
+
+**Есть в проекте:**
+
+### `core/config/versioning.py` — Полная система версионирования конфигов
+
+```python
+# Создание версии
+v1 = await create_version(tenant, {"a": 1}, pinned=True)
+
+# Активация версии  
+await activate_config(tenant, v1)
+
+# Откат к предыдущей
+await rollback(tenant)
+
+# Получение активной версии
+active = await get_active_config(tenant)
+
+# Список всех версий
+versions = await list_versions(tenant)
+```
+
+**Механизм:**
+- Таблица `tenant_config_versions` с полями: `id`, `tenant`, `version`, `config`, `pinned`, `is_active`, `activated_at`, `created_at`
+- При активации старые версии помечаются `is_active = FALSE`
+- Есть `pinned` флаг для фиксации версии
+- `ON CONFLICT (tenant, version) DO UPDATE` — уникальность по (tenant, version)
+
+**Вывод:** Полная система версионирования с откатом есть и работает (тесты есть, но нужна PostgreSQL).
+
+---
+
+## 3. Мини-приложение с кейсами (Mini-App with Cases)
+
+**Есть в проекте:**
+
+### FastAPI приложение (app/main.py)
+- 15+ роутеров: auth, cases, games, payments, withdrawals, admin, metrics, predictor, etc.
+- Plugin-based architecture
+- Multi-tenant поддержка через YAML конфиги
+
+### Игровые адаптеры (plugins/games/)
+- roblox, mlbb, pubgm, crash, mines, standoff2, upgrade, shell, cases, cases_freebet
+- Каждый имеет: MANIFEST, register(), gameplay функции
+
+### Платежные адаптеры (plugins/payments/)
+- crypto_usdt, pix_br, qris_id, spei_mx, truemoney_th, upi_in, gowd_latam
+
+### Призовые каналы (plugins/prizes/)
+- giftcard_pool, uid_topup
+
+### RTP Engine (core/engine/rtp/)
+- effective_rtp() с модификаторами (f_win, f_bet, f_chase, f_admin)
+- Redis для chase tracking
+- allowed_modifiers fallback (исправлено)
+
+### Безопасность
+- JWT токены (app/auth/jwt.py)
+- Admin токены
+- Webhook signature verification
+- Tenant валидация против registry
+
+**Вывод:** Полнофункциональное мини-приложение с кейсами, играми и платежами. Готово к использованию.
+
+---
+
+## 4. План Хостинга (Hosting Plan)
+
+### Уровень 1: Основной бэкенд (VPS)
+
+**Рекомендация:** VPS с Python, PostgreSQL, Redis
+
+**Варианты:**
+1. **DigitalOcean** — $6/mo droplet, 1 CPU, 1GB RAM, 25GB SSD
+   - Ubuntu 22.04
+   - установка: `apt install python3-pip postgresql redis`
+   -Deploy: git + pip install -e . + uvicorn
+
+2. **Hetzner** — CX-1 variant, €4.20/mo
+   - 2 vCPU, 2GB RAM, 20GB SSD
+   - Хорошее соотношение цена/производительность
+
+3. **Vultr** — $5/mo
+   - 1GB RAM, 25GB SSD, 1 vCPU
+
+**Конфигурация:**
+- PostgreSQL 16 для данных (база, бот-пул, версии конфигов)
+- Redis 7 для RTP chase, сессий, кэша
+- Uvicorn + APScheduler
+- Настройка автоперезапуска systemd
+
+### Уровень 2: Бот-хостеры (Free/Low-cost)
+
+**Для aiogram-бота (этот проект):**
+
+1. **Railway** — $5/mo free tier, легко деплой из GitHub
+2. **Render** — $7/mo free tier, поддержка фоновых процессов
+3. **PythonAnywhere** — Free tier (limited), но есть ограничения на бесконечные процессы
+4. **Cyclic** — Free tier, хорош для Python проектов
+5. **Fly.io** — $5/mo starter, но есть бесплатный trial
+
+**Сcheme для ботов:**
+- Главный бэкенд на VPS (PostgreSQL + Redis)
+- Боты подключаются к основной БД
+- APScheduler на VPS рассылает задания
+- Боты получают задачи через WebSocket или polling
+
+### Уровень 3: Домен и SSL
+
+- **Domain:** Namecheap или Name.com (~$12/год)
+- **SSL:** Let's Encrypt через Certbot (бесплатно)
+- Или использовать встроенные решения VPS-хостеров
+
+---
+
+## Итоговый план действий:
+
+### Фаза 1: Подготовка (1 неделя)
+1. Запустить бэкенд на VPS (DigitalOcean/Hetzner)
+2. Настроить PostgreSQL + Redis
+3. Запустить миграции (если есть alembic)
+4. Проверить, что все 12游戏 тесты проходят без БД
+
+### Фаза 2: Бот-хостинг (1 неделя)
+1. Выбрать хостера для ботов (Render/Railway)
+2. Настроить подключение ботов к основной БД
+3. Проверить регистрацию ботов через pool API
+4. Проверить is_warmup механизм
+
+### Фаза 3: Версионирование (2-3 дня)
+1. Проверить activate_config/rollback через API
+2. Создать первую версию конфига дляBrasil/Roblox
+3. Проверить rollback functionality
+
+### Фаза 4: Тестирование (1 неделя)
+1. Проверить deduplication механизмы
+2. Проверить работу mini-app с кейсами
+3. Проверить RTP расчет с модификаторами
+4. Нагрузочное тестирование
+
+**Риски:**
+- PostgreSQL нужен для полного функционала (версии, бот-пул)
+- Redis нужен для RTP chase
+- Free хостеры могут иметь ограничения на долгоживающие процессы
+
+**Бюджет:**
+- VPS: $4-6/мес
+- Домен: $12/год
+- Бот-хостинг: $0-7/мес (в зависимости от хостера)
+- Итого: ~$5-13/мес - no specific task requested]

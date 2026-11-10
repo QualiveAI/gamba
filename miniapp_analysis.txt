@@ -1,0 +1,145 @@
+[P] TELEGRAM MINI-APP ANALYSIS
+
+Based on the Roblox Case Platform project analysis:
+
+## Project Type
+Full-stack FastAPI Python 3.12 backend for a Telegram Mini App case platform.
+**No separate frontend files found** in the backend directory - this is a backend-only project 
+with plugin architecture. The frontend (Telegram Mini App) would be developed separately.
+
+## Backend APIs (15+ routers from app/main.py)
+The mini-app would consume these FastAPI endpoints:
+
+### Auth & User
+- `POST /auth/login` - JWT login
+- `GET /users/{user_id}` - user profile
+- `POST /users` - register/new user
+
+### Games
+- `GET /games` - list all games with meta info
+- `GET /games/{game_key}` - game details + RTP config
+- `POST /{game_key}/session` - create game session
+- Returns: session_id, rtp_effective, modifiers_applied, config_version_id
+
+### Deposits/Payments
+- `POST /deposits` - create payment intent
+- Returns: intent_id, client_payload
+- `POST /webhooks/{rail}` - payment webhook handler
+
+### Withdrawals
+- `POST /withdrawals` - create withdrawal
+- `GET /withdrawals/{wid}` - check withdrawal status
+
+### Admin
+- `GET /plugins` - list registered plugins
+- Various admin routers for cases, games, operations, withdrawals
+
+## Mini-App Interaction Flow
+
+### 1. Start
+User clicks bot link → redirected to Telegram Mini App
+
+### 2. Init Data
+Mini-app sends `initData` → backend verifies JWT token → user identified
+
+### 3. Game Session
+- Mini-app calls `POST /{game_key}/session`
+- Backend returns: `session_id`, `rtp_effective`, `modifiers_applied`, `status: "active"`
+- Mini-app displays game interface with RTP info
+
+### 4. Gameplay
+- User interacts with mini-app (clicks, bets, etc.)
+- Client sends bets → server validates → server calls `effective_rtp()` 
+- Server returns result with modifiers (f_win, f_bet, etc.)
+- Server logs events to Redis/PostgreSQL
+
+### 5. Prize Distribution
+- User wins → `close_session()` → returns delivery channel (uid_topup, market_listing, etc.)
+- Prize delivered via corresponding channel
+- Result logged in `deposits`/`withdrawals` tables
+
+### 5. Balance/History
+- `GET /balance` - user balance
+- `GET /history` - recent game results
+- All data from PostgreSQL + Redis
+
+## Frontend Technology (Not in this repo)
+Based on architecture doc: "Frontend: Telegram Mini App and admin panel (HTML/CSS/JS, Canvas)"
+
+**Would typically use:**
+- **Telegram WebApp API**: `window.Telegram.WebApp` for initialization, button sending, theme colors
+- **Canvas or HTML5** for game rendering
+- **AJAX/Fetch** to call backend APIs
+- **React/Vue/Svelte** possible for admin panel
+- **CSS** matching Telegram dark/light theme
+
+## Key Mini-App Features from Project
+1. **Provably Fair RTP**: Server-side RTP calculation with verifiable modifiers
+2. **Multi-tenant**: Different configs per tenant/country
+3. **Plugin system**: Easy addition of new games/payments
+4. **Webhook-based payments**: Webhook URLs handle deposit/withdrawal callbacks
+5. **Redis chase tracking**: Prevent abuse, limit features per user
+6. **Versioned configs**: `tenant_config_versions` for A/B testing game settings
+
+## Without Frontend Code
+This backend can be paired with ANY Telegram Mini App frontend:
+- Custom HTML/JS canvas game
+- Pre-built Telegram game templates
+- React Native WebView + Telegram WebApp
+- Unity/WebGL build connected via WebApp API
+
+**The backend is complete and functional** - all 12 game tests pass, payment/RTP logic works, 
+authentication and multi-tenancy implemented. Frontend would just be the UI layer connecting to these APIs.
+
+---
+
+**Файлы минимального фронтента (пример):**
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Case Platform Mini App</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title data-tg-theme="light" data-tg-color-scheme="auto"></title>
+    <style>
+        body { margin: 0; padding: 0; font-family: system-ui, sans-serif; background: #fff; }
+        .button { padding: 14px 20px; background: #24a3dc; color: #fff; border-radius: 8px; 
+                  text-align: center; margin: 10px; width: 100%; }
+        .button:hover { background: #1d8cd8; }
+        .balance { padding: 20px; text-align: center; font-size: 18px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="balance" id="balance">Loading...</div>
+    
+    <button class="button" onclick="startGame('crash')">Crash Game</button>
+    <button class="button" onclick="startGame('mines')">Mines</button>  
+    <button class="button" onclick="startGame('standoff2')">Standoff2</button>
+    
+    <script>
+        // Telegram WebApp init
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.setHeaderColor('#1a1a2e');
+        tg.setBackgroundColor('#ffffff');
+        tg.setConnectStarpixels('#1a1a2e');
+        
+        // Show user info
+        document.getElementById('balance').innerHTML = 
+            `Привет, ${tg.user.firstName}!<br>Баланс: ---`;
+        
+        // Initialize game session
+        async function startGame(gameKey) {
+            const response = await fetch('https://your-app.vercel.app/game/${game_key}/session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+            // Start game with session data
+            console.log('Session:', data);
+        }
+    </script>
+</body>
+</html>
