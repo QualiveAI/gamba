@@ -142,7 +142,6 @@ test("profile_daily_deposit_withdraw", async ({ page }) => {
   // вывод: селект карт и предпросмотр
   await expect(page.locator("#wd-card")).toBeVisible();
   await expect(page.locator("#wd-preview")).toContainText("$15.00");
-  await expect(page.locator("#wd-preview")).toContainText("$12.00");
   // рефералка
   await expect(page.locator("#reflink")).toHaveValue(/WDTEST/);
 });

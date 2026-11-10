@@ -201,7 +201,10 @@ function vCases() {
   const list = CATALOG.filter(c => (cat === 'gold' ? 'units' : 'freebets') === c.currency);
   return `<h1 class="title">Caixas</h1>
  <div class="seg" role="tablist">${[['gold', 'Por Ouro'], ['freebet', 'Por Cobre']].map(([k, l]) => `<button role="tab" aria-selected="${cat === k}" data-cat="${k}" class="${cat === k ? 'on' : ''}">${l}</button>`).join('')}</div>
- <div class="cases">${list.map((c, n) => `<button class="case" data-case="${c.id}" style="--i:${n}"><span class="case-no">${String(n + 1).padStart(2, '0')}</span><span class="case-img">${img(c.cover, c.name)}</span><b>${esc(c.name)}</b><span class="price ${c.currency === 'freebets' ? 'copper' : ''}">${money(c.price, c.currency)}</span></button>`).join('') || '<p class="hint">Nenhuma caixa ainda.</p>'}</div>`;
+ <div class="cases">${list.map((c, n) => {
+    const loot = c.rewards.filter(i => i.image).slice(0, 3);
+    return `<button class="case" data-case="${c.id}" style="--i:${n}"><span class="case-no">${String(n + 1).padStart(2, '0')}</span><span class="case-img">${img(c.cover, c.name)}</span><b>${esc(c.name)}</b><span class="price ${c.currency === 'freebets' ? 'copper' : ''}">${money(c.price, c.currency)}</span>${loot.length ? `<span class="case-loot">${loot.map(i => `<img src="${esc(i.image)}" alt="${esc(i.name)}" loading="lazy">`).join('')}</span>` : ''}</button>`;
+  }).join('') || '<p class="hint">Nenhuma caixa ainda.</p>'}</div>`;
 }
 const itemCard = (i, extra = '') => {
   const t = TIERS[i.tier] || TIERS.common;
@@ -680,7 +683,7 @@ window.updateWdPreview = function () {
   const nominal = parseInt(document.getElementById('wd-card').value, 10) || 1000;
   const count = Math.max(1, parseInt(document.getElementById('wd-count').value, 10) || 1);
   const total = nominal * count, gross = total * 0.015;
-  el.innerHTML = `Saque: <b>${total} 🪙</b> = <b>$${gross.toFixed(2)}</b> • no cartão: <b>$${(gross * 0.8).toFixed(2)}</b>`;
+  el.innerHTML = `Saque: <b>${total} 🪙</b> = <b>$${gross.toFixed(2)}</b>`;
 };
 async function claimDaily() {
   if (!DAILY.can_claim) return;
