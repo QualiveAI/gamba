@@ -166,7 +166,7 @@ async function loadCatalog() {
       rid: r.id, name: r.label || 'Item', tier: r.rarity && TIERS[r.rarity] ? r.rarity : 'common',
       chance: r.chance_pct ?? 0, value: r.nominal_units, image: r.image, caseId: c.id,
       caseCurrency: c.currency || 'units',
-    })).sort((a, b) => tierRank(b.tier) - tierRank(a.tier)),
+    })).sort((a, b) => b.value - a.value),
   }));
 }
 async function refreshWallet() {
@@ -391,7 +391,7 @@ let gameTimers = [];
 function stopGames() { gameTimers.forEach(t => { clearInterval(t); clearTimeout(t) }); gameTimers = [] }
 
 /* ставки */
-const RTP = .97, STAKES = [10, 50, 100, 250, 500];
+const RTP = .97, COPOS_RTP = .9, STAKES = [10, 50, 100, 250, 500];
 const stakeBar = () => `<div class="stake"><small>Aposta</small><div class="stake-row">${STAKES.map(v => `<button class="st${v === L.stake ? ' on' : ''}" data-stake="${v}" ${v > S.gold ? 'disabled' : ''}>${fmt(v)}</button>`).join('')}</div>${S.gold < STAKES[0] ? '<p class="hint">Ouro insuficiente — faça um depósito no Perfil ou pegue o check-in diário</p>' : ''}</div>`;
 
 /* minas */
@@ -463,7 +463,7 @@ const TH_LV = [
   { n: 5, swaps: 21, sp: 170, name: 'Olho de águia' },
   { n: 5, swaps: 26, sp: 130, name: 'Lenda dos copos' },
 ];
-const thX = n => Math.floor(RTP * n * 100 + 1e-6) / 100;
+const thX = n => Math.floor(COPOS_RTP * n * 100 + 1e-6) / 100;
 const thLvIdx = () => Math.min(L.thLv || 0, TH_LV.length - 1);
 let thim = { phase: 'idle', ball: 0, pos: [0, 1, 2], pick: null, win: false, stake: 0, n: 3, x: thX(3), lv: 0, sid: 0 };
 function vCopos() {

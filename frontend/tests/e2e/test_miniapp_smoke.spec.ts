@@ -103,10 +103,10 @@ test("copos_levels_flow", async ({ page }) => {
   await mockBase(page);
   await page.route("**/cases", (route) => route.fulfill({ json: [] }));
   await page.route("**/games/shell/start", (route) =>
-    route.fulfill({ json: { session_id: 2, cups: 3, ball: 0, mult: 2.91 } })
+    route.fulfill({ json: { session_id: 2, cups: 3, ball: 0, mult: 2.70 } })
   );
   await page.route("**/games/shell/pick", (route) =>
-    route.fulfill({ json: { win: true, ball: 0, guess: 0, mult: 2.91, payout: 291 } })
+    route.fulfill({ json: { win: true, ball: 0, guess: 0, mult: 2.70, payout: 270 } })
   );
   await page.goto("/");
   await page.click('[data-tab="games"]');

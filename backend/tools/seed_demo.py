@@ -160,8 +160,28 @@ def avg(v) -> int:
     return int(round(sum(v) / 2 if isinstance(v, list) else v))
 
 
+# Картинки, добранные позже демо (пользовательские): assets/demo/<asset>.webp
+DEMO_ASSETS_DIR = Path(__file__).resolve().parents[2] / "frontend" / "assets" / "demo"
+
+
+def fix_missing_images(data: dict) -> int:
+    """Предметам без картинки подставить assets/demo/<asset>.webp, если файл есть."""
+    fixed = 0
+    for c in data["cases"]:
+        for i in c["items"]:
+            if not i.get("image") and i.get("asset"):
+                cand = DEMO_ASSETS_DIR / f"{i['asset']}.webp"
+                if cand.exists():
+                    i["image"] = f"assets/demo/{i['asset']}.webp"
+                    fixed += 1
+    return fixed
+
+
 def main() -> None:
     data = json.loads(CATALOG.read_text(encoding="utf-8"))
+    fixed = fix_missing_images(data)
+    if fixed:
+        print(f"подставлено картинок из assets/demo: {fixed}")
     with psycopg.connect(DSN, row_factory=psycopg.rows.dict_row) as conn:
         keep = [CASE_NAMES[c["id"]] for c in data["cases"]]
         conn.execute("UPDATE cases SET active = FALSE WHERE name <> ALL(%s)", (keep,))

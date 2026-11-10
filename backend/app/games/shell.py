@@ -3,11 +3,11 @@ from core.engine.ledger.ledger import post_entry
 
 # Уровни «Копосов» (напёрстки): с каждым победным уровнем больше стаканчиков
 CUPS_BY_LEVEL = {1: 3, 2: 3, 3: 4, 4: 4, 5: 5, 6: 5}
-RTP = 0.97
+RTP = 0.90
 
 
 def shell_mult(cups: int) -> float:
-    # x = 0.97 * n, как в демо: шанс 1/n
+    # x = 0.90 * n (кэф понижен по запросу: было 0.97 как в демо)
     return int(RTP * cups * 100 + 1e-6) / 100
 
 

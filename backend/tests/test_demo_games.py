@@ -46,9 +46,9 @@ async def _ledger_sum(conn, uid):
 
 
 def test_multipliers_demo_formulas():
-    assert shell_mult(3) == 2.91
-    assert shell_mult(4) == 3.88
-    assert shell_mult(5) == 4.85
+    assert shell_mult(3) == 2.70
+    assert shell_mult(4) == 3.60
+    assert shell_mult(5) == 4.50
     assert mines_mult(3, 1) == 1.10
     assert mines_mult(3, 2) > mines_mult(3, 1)
     assert multiplier_at(0) == 1.0
@@ -60,12 +60,12 @@ async def test_shell_session_flow():
     async with get_conn() as conn:
         u = await _mk_user(conn)
         s = await start_shell(conn, u, 100, 1, "client-seed-1")
-        assert s["cups"] == 3 and 0 <= s["ball"] < 3 and s["mult"] == 2.91
+        assert s["cups"] == 3 and 0 <= s["ball"] < 3 and s["mult"] == 2.70
         assert await _ledger_sum(conn, u["id"]) == 10000 - 100  # ставка списана
         # забираем гарантированный выигрыш: угадываем фиксированный шарик
         res = await pick_shell(conn, u, s["session_id"], s["ball"])
-        assert res["win"] is True and res["payout"] == 291
-        assert await _ledger_sum(conn, u["id"]) == 10000 - 100 + 291
+        assert res["win"] is True and res["payout"] == 270
+        assert await _ledger_sum(conn, u["id"]) == 10000 - 100 + 270
         # повторный pick по закрытой сессии запрещён
         with pytest.raises(ValueError):
             await pick_shell(conn, u, s["session_id"], s["ball"])
