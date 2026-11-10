@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from app.db import get_conn
-from core.payments.events import ingest, process_pending, link_intent
+from core.payments.events import ingest, link_intent, process_pending
 from core.payments.intents import create_intent
 
 
@@ -17,7 +17,9 @@ async def _user_id(tg=None):
             (tg,),
         )
         await conn.commit()
-        row = await (await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))).fetchone()
+        row = await (
+            await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))
+        ).fetchone()
     return row["id"]
 
 
@@ -26,7 +28,9 @@ async def test_ingest_persists():
     key = f"evt-persist-{uuid.uuid4().hex}"
     eid = await ingest("mock", key, {"foo": "bar"})
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT * FROM payment_events WHERE id = %s", (eid,))).fetchone()
+        row = await (
+            await conn.execute("SELECT * FROM payment_events WHERE id = %s", (eid,))
+        ).fetchone()
     assert row is not None
     assert row["rail"] == "mock"
     assert row["provider_event_id"] == key
@@ -41,10 +45,12 @@ async def test_ingest_idempotent():
     second = await ingest("mock", key, {"x": 2})
     assert first == second
     async with get_conn() as conn:
-        row = await (await conn.execute(
-            "SELECT COUNT(*) AS c FROM payment_events WHERE rail='mock' AND provider_event_id=%s",
-            (key,),
-        )).fetchone()
+        row = await (
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM payment_events WHERE rail='mock' AND provider_event_id=%s",
+                (key,),
+            )
+        ).fetchone()
         assert row["c"] == 1
         assert row["c"] != 2
 
@@ -59,8 +65,14 @@ async def test_process_pending_credits():
     results = await process_pending()
     assert any(r["id"] == eid and r["status"] == "processed" for r in results)
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT balance_units FROM users WHERE id = %s", (uid,))).fetchone()
-        ev = await (await conn.execute("SELECT processed_at, outcome FROM payment_events WHERE id = %s", (eid,))).fetchone()
+        row = await (
+            await conn.execute("SELECT balance_units FROM users WHERE id = %s", (uid,))
+        ).fetchone()
+        ev = await (
+            await conn.execute(
+                "SELECT processed_at, outcome FROM payment_events WHERE id = %s", (eid,)
+            )
+        ).fetchone()
     assert int(row["balance_units"]) == 500
     assert ev["processed_at"] is not None
     assert ev["outcome"] == "processed"
@@ -73,7 +85,9 @@ async def test_process_pending_skips_no_intent():
     results = await process_pending()
     assert any(r["id"] == eid and r["status"] == "skipped_no_intent" for r in results)
     async with get_conn() as conn:
-        ev = await (await conn.execute("SELECT processed_at FROM payment_events WHERE id = %s", (eid,))).fetchone()
+        ev = await (
+            await conn.execute("SELECT processed_at FROM payment_events WHERE id = %s", (eid,))
+        ).fetchone()
     assert ev["processed_at"] is None
 
 
@@ -84,12 +98,14 @@ async def test_process_pending_idempotent_no_double_credit():
     ekey1 = f"evt-{uuid.uuid4().hex}"
     ekey2 = f"evt-{uuid.uuid4().hex}"
     intent = await create_intent(uid, "default", "mock", 100, "units", ikey)
-    eid1 = await ingest("mock", ekey1, {"ok": True}, intent_id=intent.id)
+    await ingest("mock", ekey1, {"ok": True}, intent_id=intent.id)
     await process_pending()
     await ingest("mock", ekey2, {"ok": True}, intent_id=intent.id)
     await process_pending()
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT balance_units FROM users WHERE id = %s", (uid,))).fetchone()
+        row = await (
+            await conn.execute("SELECT balance_units FROM users WHERE id = %s", (uid,))
+        ).fetchone()
     assert int(row["balance_units"]) == 200
     assert int(row["balance_units"]) != 0
 
@@ -103,6 +119,8 @@ async def test_link_intent():
     eid = await ingest("mock", ekey, {"ok": True})
     await link_intent(eid, intent.id)
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT intent_id FROM payment_events WHERE id = %s", (eid,))).fetchone()
+        row = await (
+            await conn.execute("SELECT intent_id FROM payment_events WHERE id = %s", (eid,))
+        ).fetchone()
     assert row["intent_id"] == intent.id
     assert row["intent_id"] != "other"

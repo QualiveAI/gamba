@@ -1,8 +1,9 @@
-import pytest
 import uuid
 
+import pytest
+
 from app.db import get_conn
-from core.payments.events import ingest, process_pending, link_intent
+from core.payments.events import ingest, link_intent, process_pending
 from core.payments.intents import create_intent
 
 
@@ -14,7 +15,9 @@ async def _user():
             (tg,),
         )
         await conn.commit()
-        row = await (await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))).fetchone()
+        row = await (
+            await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))
+        ).fetchone()
     return row["id"]
 
 
@@ -23,7 +26,9 @@ async def test_webhook_before_intent():
     uid = await _user()
     eid = await ingest("mock", "evt-1", {"foo": "bar"})
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT processed_at FROM payment_events WHERE id = %s", (eid,))).fetchone()
+        row = await (
+            await conn.execute("SELECT processed_at FROM payment_events WHERE id = %s", (eid,))
+        ).fetchone()
     assert row is not None
     assert row["processed_at"] is None
 
@@ -34,11 +39,19 @@ async def test_webhook_before_intent():
     assert any(r["id"] == eid and r["status"] == "processed" for r in results)
 
     async with get_conn() as conn:
-        cnt = await (await conn.execute("SELECT COUNT(*) AS c FROM ledger_entries WHERE reason = 'deposit_units'")).fetchone()
+        cnt = await (
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM ledger_entries WHERE reason = 'deposit_units'"
+            )
+        ).fetchone()
     assert cnt["c"] >= 1
 
     eid2 = await ingest("mock", "evt-1", {"foo": "bar2"})
     assert eid2 == eid
     async with get_conn() as conn:
-        cnt2 = await (await conn.execute("SELECT COUNT(*) AS c FROM ledger_entries WHERE reason = 'deposit_units'")).fetchone()
+        cnt2 = await (
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM ledger_entries WHERE reason = 'deposit_units'"
+            )
+        ).fetchone()
     assert cnt2["c"] == cnt["c"]

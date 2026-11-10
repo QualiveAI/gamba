@@ -1,10 +1,9 @@
-from core.ops.exceptions import ServiceDisabled
-
-
 import json
 import os
 
 import redis.asyncio as redis
+
+from core.ops.exceptions import ServiceDisabled
 
 CACHE_TTL = 5
 
@@ -29,7 +28,8 @@ async def get_flag(conn, key: str, default: bool = True) -> bool:
 
 async def set_flag(conn, key: str, value: bool, who: str = "admin"):
     await conn.execute(
-        "INSERT INTO system_config (key, value) VALUES (%s, %s) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        "INSERT INTO system_config (key, value) VALUES (%s, %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
         (key, json.dumps({"value": value})),
     )
     try:

@@ -6,6 +6,7 @@ if sys.platform == "win32":
 
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, Response
 
 from app.api.admin import router as admin_router
@@ -28,17 +29,10 @@ from core.api.router import (
     webhooks_router,
 )
 from core.api.router import (
-    games_router as core_games_router,
-)
-from core.api.router import (
     router as meta_router,
 )
-from core.api.router import (
-    withdrawals_router as core_withdrawals_router,
-)
-from core.observability.metrics import render_prometheus
 from core.catalog.analytics import auto_pause_all_cases
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from core.observability.metrics import render_prometheus
 
 
 @asynccontextmanager
@@ -51,14 +45,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="roblox-case-platform", lifespan=lifespan)
+
+# Регистрация игровых/платёжных плагинов в реестре (иначе тенант-валидация падает)
+from core.registry.loader import discover_plugins  # noqa: E402
+
+discover_plugins()
+
 scheduler = AsyncIOScheduler()
-scheduler.add_job(auto_pause_all_cases, "interval", minutes=10, id="auto_pause", replace_existing=True)
+scheduler.add_job(
+    auto_pause_all_cases, "interval", minutes=10, id="auto_pause", replace_existing=True
+)
 app.include_router(auth_router)
 app.include_router(meta_router)
 app.include_router(deposits_router)
 app.include_router(webhooks_router)
-app.include_router(core_games_router)
-app.include_router(core_withdrawals_router)
 app.include_router(cases_router)
 app.include_router(games_router)
 app.include_router(payments_router)
@@ -90,5 +90,3 @@ async def metrics(request: Request):
     if token != os.getenv("METRICS_TOKEN", "") and request.client.host not in allow:
         return Response(status_code=404)
     return Response(content=render_prometheus(), media_type="text/plain")
-
-

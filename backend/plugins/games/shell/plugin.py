@@ -1,4 +1,4 @@
-﻿import random
+import random
 
 from core.contracts.game import (
     AccountValidation,
@@ -42,7 +42,9 @@ class ShellAdapter:
         decision = await effective_rtp(base_rtp, self.game_key, user, session_ctx)
         ball = random.randrange(3)
         payout = self.config.get("payout_multiplier", 2.7) * decision.rtp_effective / 0.9
-        is_admin = user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        is_admin = (
+            user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        )
         session = {
             "ball": ball,
             "status": "open",

@@ -1,4 +1,4 @@
-﻿import random
+import random
 
 from core.contracts.game import (
     AccountValidation,
@@ -43,7 +43,9 @@ class MinesAdapter:
         mine_count = 3
         grid_size = 25
         mines = random.sample(range(grid_size), mine_count)
-        is_admin = user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        is_admin = (
+            user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        )
         session = {
             "mines": mines,
             "revealed": [],

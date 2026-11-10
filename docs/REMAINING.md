@@ -1,56 +1,51 @@
-# Что осталось доделать
+# Что осталось доделать (актуализировано 2026-11-06)
 
-## Высокий приоритет (блокирует запуск)
+## Выполнено (было в старом списке, подтверждено кодом и тестами)
 
-- **Payment events pipeline**
-  - `core/payments/events.py`: `ingest()`, `process_pending()`, `create_intent()` (интенты уже есть).
-  - таблицы `payment_events` и `payment_intents` уже добавлены, но обработчик pending-событий отсутствует.
-  - мигрировать оставшиеся прямые `post_entry` в `stars.py`, `gifts.py`, `yoomoney` на `apply_event`.
+- ✅ Payment events pipeline: `ingest()`, `process_pending()`, `create_intent()` (tests/payments)
+- ✅ Verify gate: `POST /admin/withdrawals/{id}/finalize` подключён (tests/withdrawals)
+- ✅ Supplier fallback: primary → fallback → deferred + circuit breaker (core/delivery/supplier_client.py)
+- ✅ Config versioning: `tenant_config_versions`, activate/rollback, pinned (core/config/versioning.py)
+- ✅ ServiceDisabled + kill switch (core/service_disabled.py)
+- ✅ RTP wiring: cases_freebet вызывает `effective_rtp`; roblox-каталог из БД
+- ✅ Auto-pause: тесты зелёные, scheduler в main.py
+- ✅ Builder UI publish flow (frontend/js/admin_builder.js)
+- ✅ Chaos-тесты против реальных API
+- ✅ Раннер миграций `tools/migrate.py` + миграция 0009 (withdrawals.idempotency_key)
+- ✅ Тестовая изоляция (conftest: очистка БД на прогон); 116+ тестов зелёные, ruff чист
 
-- **Wire verify gate в API**
-  - добавить `POST /admin/withdrawals/{id}/finalize`.
-  - подключить `finalize()` к фоновой задаче/очереди, чтобы gate реально срабатывал.
+## Выполнено в этой итерации (платежи WINDROP)
 
-- **Supplier fallback**
-  - `core/delivery/supplier_client.py`: primary → fallback → deferred.
-  - circuit breaker, корректные статусы `pending_supplier` / `manual_review`.
+- ✅ Плагин `paygate` (карты, без KYC, USDC-выплата на свой кошелёк) + GET-вебхук
+- ✅ Плагин `coinso` (крипта USDT) + вебхук + сверка через /payment/status
+- ✅ Депозиты: JWT, intents в БД, комиссия на клиенте (gross в инвойс, net на баланс),
+  зачисление через apply_event (идемпотентно)
+- ✅ Мини-апп: выбор способа оплаты, показ комиссии, поллинг статуса
+- ✅ Фронт игр (crash/mines/upgrade/shell) переписан на боевой API
+  (раньше вызывал mock-эндпоинты, которых нет)
+- ✅ Удалены mock-роутеры core (перехватывали боевой POST /withdrawals)
+- ✅ GET /withdrawals/{id}/status для поллинга вывода
+- ✅ White-label брендинг: GET /meta/tenant + применение бренда тенанта на фронте
+  (tenant default = ROBLOXWINDROP)
+- ✅ docs/PAYMENTS_COINSO.md, docs/PAYMENTS_GEO_MAP.md (волны: BR → MX/PH/ID → Африка/ЕС → мир)
 
-- **Config versioning**
-  - таблица `tenant_config_versions`.
-  - `activate_config()` с rollback и pinned-версиями.
+## Осталось (приоритет)
 
-- **ServiceDisabled exception + kill switch**
-  - реализовать исключение и middleware для отключения сервисов на лету.
+### Высокий
+- **Боевые ключи платежей**: PAYGATE_WALLET, COINSO_SECRET_KEY/PROJECT_ID в infra/.env;
+  прогон цепочки через Test mode Coinso до продакшена.
+- **Нативный PIX**: PayGate не даёт PIX-QR; если конверсия карт низкая — P2P-PIX-агрегатор
+  (искать в TG-каналах iGaming-арбитража), rail по чек-листу из PAYMENTS_GEO_MAP.md.
+- **i18n**: модуль core/i18n мёртв (никто не вызывает), локаль одна en.yaml. Подключить
+  локали в мини-апп (pt-BR) и тексты бота — отдельная задача white-label.
 
-## Средний приоритет
+### Средний
+- Перевод stars/gifts/yoomoney с прямого post_entry на events pipeline
+  (идемпотентность уже есть в post_entry — низкий риск, отложено сознательно).
+- Coинько-адаптер Coinso: уточнить у саппорта схему подписи вебхука (сейчас доверяем +
+  сверяем статус через API) и реальный курс RUB (env COINSO_USD_RUB_RATE=90).
+- Playwright e2e на новые потоки депозитов и игр.
 
-- **RTP wiring**
-  - `cases_freebet` должен вызывать `effective_rtp`.
-  - Roblox plugin должен читать каталог из БД, а не YAML.
-
-- **Auto-pause**
-  - убрать зависимость от null `catalog_version_id` в `case_openings`.
-  - проверить scheduler каждые 10 минут на реальных данных.
-
-- **Builder UI**
-  - завершить publish flow: create case → version → prizes → preview → publish (сейчас stub alert).
-
-- **Chaos tests**
-  - переписать против реальных API после появления модулей.
-  - покрыть webhook race, supplier down, kill switch, config rollback.
-
-- **Real-money smoke**
-  - прогон на staging с mock suppliers.
-
-## Низкий приоритет / улучшения
-
-- убрать оставшиеся прямые вызовы ledger вне `apply.py`;
-- расширить i18n и локализацию ошибок;
-- добавить метрики/алерты для новых payment events;
-- документация API и RUNBOOK для новых эндпоинтов.
-
-## Текущий статус тестов
-
-- 44+ тестов проходят, ruff clean, AST guard проходит.
-- chaos tests пока skip (зависимости отсутствуют).
-- payment intents покрыты 4 тестами (все проходят).
+### Низкий
+- Метрики/алерты по payment events (Prometheus render есть).
+- Расширить chaos-тесты на новые платёжные рельсы.

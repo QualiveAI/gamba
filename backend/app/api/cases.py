@@ -17,14 +17,14 @@ async def list_cases(user=Depends(get_current_user)):  # noqa: B008  # noqa: B00
     async with get_conn() as conn:
         cases = await (
             await conn.execute(
-                "SELECT id, name, price_units, rtp_profile FROM cases WHERE active = TRUE"
+                "SELECT id, name, price_units, rtp_profile, currency FROM cases WHERE active = TRUE"
             )
         ).fetchall()
         out = []
         for c in cases:
             rewards = await (
                 await conn.execute(
-                    "SELECT id, reward_type, game_key, nominal_units, weight, region FROM case_rewards WHERE case_id = %s",  # noqa: E501
+                    "SELECT id, reward_type, game_key, label, nominal_units, weight, region FROM case_rewards WHERE case_id = %s",  # noqa: E501
                     (c["id"],),
                 )
             ).fetchall()

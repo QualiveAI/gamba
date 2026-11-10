@@ -1,4 +1,5 @@
-const API_BASE = window.location.origin.replace(/:\d+$/, "") + ":8000";
+// API на том же origin, что и мини-апп (Caddy проксирует на backend)
+const API_BASE = window.location.origin;
 let jwtToken = sessionStorage.getItem("jwt") || "";
 
 async function ensureAuth() {

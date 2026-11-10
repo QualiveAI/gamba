@@ -1,15 +1,20 @@
+import asyncio
 import os
 import uuid
-import asyncio
 
 import httpx
 
 from core.contracts.prize import DeliveryResult, VerificationResult
-from core.ops.exceptions import SupplierDown, OutOfStock
+from core.ops.exceptions import OutOfStock, SupplierDown
 
 
 class UidTopupChannel:
-    MANIFEST = {"key": "uid_topup", "type": "prize", "contract_version": 1, "enabled_env": "TOPUP_ENABLED"}
+    MANIFEST = {
+        "key": "uid_topup",
+        "type": "prize",
+        "contract_version": 1,
+        "enabled_env": "TOPUP_ENABLED",
+    }
     channel_key = "uid_topup"
 
     def __init__(self):
@@ -52,7 +57,11 @@ class UidTopupChannel:
                         f"{url}/order",
                         json={
                             "user_ref": user_ref,
-                            "amount": getattr(prize_quote, "amount_units", getattr(prize_quote, "nominal_units", 0)),
+                            "amount": getattr(
+                                prize_quote,
+                                "amount_units",
+                                getattr(prize_quote, "nominal_units", 0),
+                            ),
                             "idempotency_key": idempotency_key,
                         },
                         headers={"X-API-Key": key},
@@ -66,7 +75,7 @@ class UidTopupChannel:
                 raise
             except Exception as e:
                 if attempt == 1:
-                    raise SupplierDown(str(e))
+                    raise SupplierDown(str(e)) from e
                 await asyncio.sleep(0.1)
         raise SupplierDown("max retries")
 

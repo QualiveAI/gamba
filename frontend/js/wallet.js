@@ -12,11 +12,13 @@ async function renderWallet() {
   const container = document.getElementById("wallet");
   if (container) {
     container.innerHTML = `
-      <div class="balance-row"><span>Units</span><span>${units}</span></div>
-      <div class="balance-row"><span>Freebets</span><span>${freebets} <span class="badge">non-withdrawable</span></span></div>
+      <div class="balance-row"><span>🪙 Ouro</span><span>${units}</span></div>
+      <div class="balance-row"><span>🥉 Cobre</span><span>${freebets} <small style="color:var(--muted)">(não sacável)</small></span></div>
     `;
   }
 
+  const headerBal = document.getElementById("balance");
+  if (headerBal) headerBal.textContent = String(units);
   const wdBtn = document.getElementById("wd-btn");
   if (wdBtn) {
     if (units < minWithdraw) {
@@ -38,3 +40,21 @@ async function renderWallet() {
 }
 
 window.renderWallet = renderWallet;
+
+// Медные монетки (фрибеты) -> золотые, курс 100:1
+async function convertFreebets() {
+  const statusEl = document.getElementById("conv-status");
+  const amount = parseInt(document.getElementById("conv-amount").value, 10) || 0;
+  try {
+    const res = await window.api("/rewards/convert_freebets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount_copper: amount }),
+    });
+    if (statusEl) statusEl.textContent = `Convertido: ${res.converted_copper} 🥉 -> ${res.gold} 🪙`;
+    if (window.renderWallet) window.renderWallet();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "Erro: " + e.message;
+  }
+}
+window.convertFreebets = convertFreebets;

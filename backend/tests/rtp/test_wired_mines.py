@@ -1,7 +1,6 @@
-﻿import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from core.engine.rtp.engine import RtpDecision
 from plugins.games.mines.plugin import MinesAdapter

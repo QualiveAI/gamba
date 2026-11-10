@@ -8,6 +8,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 COPY backend/pyproject.toml backend/ruff.toml ./
 COPY backend/app ./app
+COPY backend/core ./core
+COPY backend/plugins ./plugins
+COPY backend/configs ./configs
+COPY backend/locales ./locales
 COPY backend/migrations ./migrations
 
 RUN pip install --no-cache-dir -e . --no-build-isolation

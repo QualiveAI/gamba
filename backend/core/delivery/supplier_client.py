@@ -57,7 +57,7 @@ def _candidate_suppliers(region):
         primary = registry.get("supplier", region)
         if primary is not None:
             items.append(primary)
-    for (t, k, _g), obj in getattr(registry, "_items", {}).items():
+    for (t, _k, _g), obj in getattr(registry, "_items", {}).items():
         if t == "supplier" and obj not in items:
             items.append(obj)
     mock = registry.get("supplier", "mock")
@@ -83,7 +83,7 @@ async def _run_supplier(supplier, code, brand, region):
         result = check_code(code, brand, region)
         if asyncio.iscoroutine(result):
             result = await result
-    except (SupplierDown, TimeoutError) as e:
+    except (SupplierDown, TimeoutError):
         _record_failure(supplier)
         raise
     except Exception:
@@ -126,12 +126,10 @@ async def purchase_with_fallback(*args, **kwargs):
     if suppliers is None:
         suppliers = _candidate_suppliers(region)
 
-    last_error = None
     for supplier in suppliers or []:
         try:
             return await _run_supplier(supplier, code, brand, region)
-        except (SupplierDown, TimeoutError) as e:
-            last_error = e
+        except (SupplierDown, TimeoutError):
             continue
         except DeliveryDeferred:
             raise

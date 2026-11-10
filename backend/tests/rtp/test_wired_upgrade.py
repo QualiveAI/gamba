@@ -1,7 +1,6 @@
-import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from core.engine.rtp.engine import RtpDecision
 from plugins.games.upgrade.plugin import UpgradeAdapter
@@ -13,7 +12,9 @@ async def test_empirical_matches_decision():
     adapter = UpgradeAdapter()
     user = {"id": 1, "is_admin": False}
     with patch("plugins.games.upgrade.plugin.effective_rtp", new=AsyncMock(return_value=decision)):
-        sessions = [await adapter.open_session(user, {"value": 1}, {"value": 2}, {}) for _ in range(2000)]
+        sessions = [
+            await adapter.open_session(user, {"value": 1}, {"value": 2}, {}) for _ in range(2000)
+        ]
     assert all(s["rtp_effective"] == 0.80 for s in sessions)
     assert all(s["config_version_id"] is not None for s in sessions)
     assert all(s["modifiers_applied"] == ["f_chase"] for s in sessions)
@@ -25,7 +26,9 @@ async def test_admin_override():
     adapter = UpgradeAdapter()
     user = {"id": 1, "is_admin": True}
     with patch("plugins.games.upgrade.plugin.effective_rtp", new=AsyncMock(return_value=decision)):
-        sessions = [await adapter.open_session(user, {"value": 1}, {"value": 2}, {}) for _ in range(100)]
+        sessions = [
+            await adapter.open_session(user, {"value": 1}, {"value": 2}, {}) for _ in range(100)
+        ]
     assert all(s["admin_override"] is True for s in sessions)
 
 
@@ -35,7 +38,8 @@ async def test_override_ignored_for_non_admin():
     adapter = UpgradeAdapter()
     user = {"id": 1, "is_admin": False}
     with patch("plugins.games.upgrade.plugin.effective_rtp", new=AsyncMock(return_value=decision)):
-        sessions = [await adapter.open_session(user, {"value": 1}, {"value": 2}, {}) for _ in range(1000)]
+        sessions = [
+            await adapter.open_session(user, {"value": 1}, {"value": 2}, {}) for _ in range(1000)
+        ]
     assert all(s["admin_override"] is False for s in sessions)
     assert all(s["rtp_effective"] == 0.80 for s in sessions)
-

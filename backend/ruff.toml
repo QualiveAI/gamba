@@ -3,3 +3,7 @@ target-version = "py312"
 
 [lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[lint.per-file-ignores]
+# В тестах длинные SQL-строки — не переносим
+"tests/**" = ["E501"]

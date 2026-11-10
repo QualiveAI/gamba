@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
 .env
 .env.*
 node_modules/
@@ -14,3 +15,20 @@ dist/
 build/
 .DS_Store
 !.env.example
+
+# Local credentials, databases, and generated files
+*.pyo
+*.egg-info/
+backups/
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+*.p12
+*.pfx
+*.key
+temp_vars
+БОТ.txt
+Thumbs.db
+playwright-report/
+test-results/

@@ -2,7 +2,7 @@ import pytest
 
 from app.db import get_conn
 from core.ops.exceptions import ServiceDisabled
-from core.ops.flags import set_flag, require_enabled
+from core.ops.flags import require_enabled, set_flag
 
 
 @pytest.mark.asyncio

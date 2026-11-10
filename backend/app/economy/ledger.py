@@ -7,4 +7,3 @@ async def post_entry(conn, user_id, delta, reason, ref_id=None, currency="units"
 
 async def reconcile(conn):
     return []
-

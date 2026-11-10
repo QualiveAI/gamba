@@ -1,4 +1,5 @@
 import json
+
 from app.db import get_conn
 
 
@@ -66,7 +67,8 @@ async def auto_pause_all_cases():
         async with get_conn() as conn:
             vrow = await (
                 await conn.execute(
-                    "SELECT id FROM case_versions WHERE case_id = %s ORDER BY version_no DESC LIMIT 1",
+                    "SELECT id FROM case_versions "
+                    "WHERE case_id = %s ORDER BY version_no DESC LIMIT 1",
                     (case_id,),
                 )
             ).fetchone()

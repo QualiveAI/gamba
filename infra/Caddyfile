@@ -1,3 +1,12 @@
 :80 {
-    reverse_proxy backend:8000
+    # Статика мини-аппа WINDROP: /app/* -> ../frontend (префикс срезается)
+    handle_path /app/* {
+        root * /srv/app
+        try_files {path} /index.html
+        file_server
+    }
+    # API и вебхуки -> backend
+    handle {
+        reverse_proxy backend:8000
+    }
 }

@@ -1,4 +1,3 @@
-
 import pytest
 
 from app.db import get_conn
@@ -23,7 +22,7 @@ async def _seed(version_id, case_def_id, real_value_minor, price_units=100, n=10
             (version_id, case_def_id),
         )
         prize_id = version_id
-        cur = await conn.execute(
+        await conn.execute(
             "INSERT INTO case_prizes (id, version_id, sort_order, label, nominal_units, real_value_minor, weight_bp) VALUES (%s, %s, 1, 'p', %s, %s, 10000) ON CONFLICT (id) DO NOTHING RETURNING id",
             (prize_id, version_id, price_units, real_value_minor),
         )
@@ -50,9 +49,13 @@ async def test_skewed_data_pauses_case():
     paused = await auto_pause_if_drift(version_id)
     assert paused is True
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))).fetchone()
+        row = await (
+            await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))
+        ).fetchone()
         assert row["status"] == "paused"
-        ev = await (await conn.execute("SELECT COUNT(*) AS c FROM events WHERE event_type = 'case_paused'")).fetchone()
+        ev = await (
+            await conn.execute("SELECT COUNT(*) AS c FROM events WHERE event_type = 'case_paused'")
+        ).fetchone()
         assert ev["c"] >= 1
 
 
@@ -64,7 +67,9 @@ async def test_clean_data_not_paused():
     paused = await auto_pause_if_drift(version_id)
     assert paused is False
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))).fetchone()
+        row = await (
+            await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))
+        ).fetchone()
         assert row["status"] != "paused"
 
 
@@ -75,7 +80,9 @@ async def test_paused_case_rejects_new_session():
     await _seed(version_id, case_id, int(100 * 1.0))
     await auto_pause_if_drift(version_id)
     async with get_conn() as conn:
-        row = await (await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))).fetchone()
+        row = await (
+            await conn.execute("SELECT status FROM case_definitions WHERE id = %s", (case_id,))
+        ).fetchone()
         assert row["status"] == "paused"
         assert row["status"] != "published"
 

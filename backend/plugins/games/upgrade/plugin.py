@@ -1,4 +1,4 @@
-﻿from core.contracts.game import AccountValidation, DeliveryResult, DeliveryStatus
+from core.contracts.game import AccountValidation, DeliveryResult, DeliveryStatus
 from core.engine.rtp.engine import effective_rtp
 
 
@@ -21,7 +21,9 @@ class UpgradeAdapter:
     def quote_prize(self, prize_id, amount_units):
         return None
 
-    async def open_session(self, user, from_prize, to_prize, config=None, conn=None, session_ctx=None):
+    async def open_session(
+        self, user, from_prize, to_prize, config=None, conn=None, session_ctx=None
+    ):
         if config is None:
             config = self.config
         if session_ctx is None:
@@ -38,7 +40,9 @@ class UpgradeAdapter:
         decision = await effective_rtp(base_rtp, self.game_key, user, session_ctx)
         house_edge = float(self.config.get("house_edge_factor", 0.8))
         chance = (from_val / to_val) * house_edge * decision.rtp_effective
-        is_admin = user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        is_admin = (
+            user.get("is_admin") if isinstance(user, dict) else getattr(user, "is_admin", False)
+        )
         session = {
             "from": from_prize,
             "to": to_prize,

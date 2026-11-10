@@ -33,3 +33,17 @@ async def my_withdrawals(user=Depends(get_current_user)):  # noqa: B008  # noqa:
             )
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@router.get("/{wid}/status")
+async def withdrawal_status(wid: int, user=Depends(get_current_user)):  # noqa: B008
+    async with get_conn() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT id, status FROM withdrawals WHERE id = %s AND user_id = %s",
+                (wid, user["id"]),
+            )
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="not found")  # noqa: B904
+    return {"withdrawal_id": row["id"], "status": row["status"]}

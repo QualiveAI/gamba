@@ -1,21 +1,21 @@
-import os
-
 import yaml
 
 from core.contracts.game import (
     AccountValidation,
     DeliveryResult,
     DeliveryStatus,
-    PrizeQuote,
-    PrizeSpec,
 )
-from core.engine.rtp.behavior import session_context
 from core.engine.rtp.engine import effective_rtp
 from plugins.prizes.uid_topup.adapter import UidTopupChannel
 
 
 class PubgmAdapter:
-    MANIFEST = {"key": "pubgm", "type": "game", "contract_version": 1, "enabled_env": "PUBGM_ENABLED"}
+    MANIFEST = {
+        "key": "pubgm",
+        "type": "game",
+        "contract_version": 1,
+        "enabled_env": "PUBGM_ENABLED",
+    }
     game_key = "pubgm"
     display_name = "PUBG Mobile"
     supported_currencies = ["units"]

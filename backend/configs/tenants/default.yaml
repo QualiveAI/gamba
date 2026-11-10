@@ -1,7 +1,7 @@
 brand:
   logo_url: ''
-  name: CasePlatform
-  primary_color: '#101014'
+  name: ROBLOXWINDROP
+  primary_color: '#c8102e'
 domains:
   api: https://api.example.com
   frontend: https://app.example.com
@@ -22,11 +22,29 @@ geos:
   max_deposit_minor: 500000
   min_deposit_minor: 500
   rails:
-  - pix
-  - crypto_usdt
+  - paygate
+  - coinso
 - enabled: false
   geo: PH
   rails:
   - qrph
-  - crypto_usdt
+  - coinso
+- geo: MX
+  enabled: false
+  rails:
+  - spei
+  - coinso
+  currency_display: MXN
+  kyc: none
+  min_deposit_minor: 500
+  max_deposit_minor: 500000
+- geo: ID
+  enabled: false
+  rails:
+  - qris
+  - coinso
+  currency_display: IDR
+  kyc: none
+  min_deposit_minor: 500
+  max_deposit_minor: 500000
 tenant: default
