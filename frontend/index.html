@@ -151,6 +151,16 @@
               </select>
             </label>
             <label>Qtd. <input id="wd-count" type="number" value="1" min="1" oninput="updateWithdrawPreview()" /></label>
+            <label>Região
+              <select id="wd-region">
+                <option value="BR" selected>BR</option>
+                <option value="ID">ID</option>
+                <option value="IN">IN</option>
+                <option value="MX">MX</option>
+                <option value="PH">PH</option>
+                <option value="TH">TH</option>
+              </select>
+            </label>
           </div>
           <div id="wd-preview" class="limits"></div>
           <button class="btn-primary" onclick="submitWithdraw()">Sacar</button>

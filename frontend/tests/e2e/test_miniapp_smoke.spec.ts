@@ -17,7 +17,7 @@ test("deposit_and_open_case", async ({ page }) => {
   await expect(page.locator("#cases-list")).toBeVisible();
 });
 
-test("withdraw_below_minimum_blocked", async ({ page }) => {
+test("withdraw_preview_and_region", async ({ page }) => {
   await page.route("**/auth/telegram", (route) =>
     route.fulfill({ json: { access_token: "test-jwt" } })
   );
@@ -25,10 +25,12 @@ test("withdraw_below_minimum_blocked", async ({ page }) => {
     route.fulfill({ json: { units: 500, freebets: 0, min_withdraw: 1000 } })
   );
   await page.goto("/");
-  await page.click('[data-screen="wallet"]');
-  const btn = page.locator("#wd-btn");
-  await expect(btn).toBeDisabled();
-  await expect(btn).toHaveAttribute("data-disabled-reason", "below_minimum");
+  await page.click('[data-screen="saldo"]');
+  // превью считается из номинала карточки: 1000 🪙 = $15.00, на карту $12.00 (80%)
+  await expect(page.locator("#wd-preview")).toContainText("Saque:");
+  await expect(page.locator("#wd-preview")).toContainText("$12.00");
+  // регион обязателен для отправки вывода (backend /withdrawals {amount, region})
+  await expect(page.locator("#wd-region")).toHaveValue("BR");
 });
 
 test("mines_reveal_and_cashout", async ({ page }) => {
@@ -45,11 +47,16 @@ test("mines_reveal_and_cashout", async ({ page }) => {
     route.fulfill({ json: { payout: 150, revealed: 1 } })
   );
   await page.goto("/");
-  await page.click('[data-screen="mines"]');
+  await page.click('[data-screen="jogos"]');
+  // mines — активная игровая вкладка по умолчанию
+  await expect(page.locator("#mines-grid")).toBeVisible();
+  await page.click('.game-card[data-g="crash"]');
+  await expect(page.locator("#crash-bet")).toBeVisible();
+  await page.click('.game-card[data-g="mines"]');
   await expect(page.locator("#mines-grid")).toBeVisible();
 });
 
-test("deposit_pix_qr_rendered", async ({ page }) => {
+test("deposit_methods_rendered_on_saldo", async ({ page }) => {
   await page.route("**/auth/telegram", (route) =>
     route.fulfill({ json: { access_token: "test-jwt" } })
   );
@@ -78,7 +85,7 @@ test("deposit_pix_qr_rendered", async ({ page }) => {
     })
   );
   await page.goto("/");
-  await page.click('[data-screen="deposit"]');
+  await page.click('[data-screen="saldo"]');
   await expect(page.locator("#deposit-methods")).toBeVisible();
 });
 
@@ -90,7 +97,7 @@ test("freebets_cannot_withdraw", async ({ page }) => {
     route.fulfill({ json: { units: 0, freebets: 5000, min_withdraw: 1000 } })
   );
   await page.goto("/");
-  await page.click('[data-screen="wallet"]');
-  const btn = page.locator("#wd-freebets-btn");
-  await expect(btn).toBeDisabled();
+  await page.click('[data-screen="saldo"]');
+  // медные монетки (фрибеты) помечены как неснимаемые с баланса вывода
+  await expect(page.locator("#wallet")).toContainText("não sacável");
 });
