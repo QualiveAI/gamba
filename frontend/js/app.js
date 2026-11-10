@@ -17,6 +17,9 @@ const tierRank = id => TIER_ORDER.indexOf(id);
 const coin = (c = 'gold') => `<span class="coin ${c === 'copper' ? 'copper' : ''}" aria-hidden="true"></span>`;
 const cur = c => c === 'freebets' ? 'cobre' : 'ouro';
 const money = (n, c = 'gold') => `${coin(c)}${fmt(n)}`;
+// Курс для отображения в реалах (1 USD = 5.40 BRL) — менять в одном месте
+const USD_BRL = 5.4;
+const brl = usd => `R$ ${(usd * USD_BRL).toFixed(2).replace('.', ',')}`;
 const img = (src, alt) => src ? `<img src="${esc(src)}" alt="${esc(alt)}" decoding="async" loading="lazy">` : '<span class="ph"></span>';
 document.addEventListener('error', e => { if (e.target.tagName === 'IMG') e.target.classList.add('broken') }, true);
 
@@ -644,19 +647,18 @@ function vProfile() {
   return `<h1 class="title">Perfil</h1>
  <section class="card"><h2>Saldo</h2><div class="bal-grid"><div class="b gold">${coin('gold')}<span><b>${fmt(S.gold)}</b><small>Ouro: caixas, jogos, aprimoramentos</small></span></div><div class="b copper">${coin('copper')}<span><b>${fmt(S.copper)}</b><small>Cobre: caixas de freebet</small></span></div></div>
  <p class="note">Ouro vem de depósitos, dos mini-jogos e dos itens vendidos. Cobre — do check-in diário.</p></section>
- <section class="card"><div class="card-head"><h2>Depositar</h2><span class="pill">100 🪙 = $1,50</span></div>
+ <section class="card"><div class="card-head"><h2>Depositar</h2><span class="pill">100 🪙 ≈ ${brl(1.5)}</span></div>
  <div class="chip-row" id="deposit-methods"></div>
  <div class="controls"><label>Valor 🪙 <input id="dep-amount" type="number" value="100" min="100" step="100" inputmode="numeric" /></label></div>
  <div class="row"><button class="chip" data-dep="100">+100</button><button class="chip" data-dep="500">+500</button><button class="chip" data-dep="1000">+1000</button><button class="chip" data-dep="5000">+5000</button></div>
  <button class="cta" data-docreate>Depositar</button>
  <div id="dep-status" class="toast"></div><div id="qr"></div></section>
- <section class="card"><div class="card-head"><h2>Sacar</h2><span class="pill">mín. 1 000 🪙</span></div>
+ <section class="card"><div class="card-head"><h2>Sacar</h2><img src="assets/logo.png" alt="WINDROP" class="wd-logo"><span class="pill">mín. 1.000 🪙</span></div>
  <div class="controls">
   <label>Cartão <select id="wd-card" onchange="window.updateWdPreview()">
-   <option value="1000">$15 — 1.000 🪙</option><option value="2500">$37,50 — 2.500 🪙</option>
-   <option value="5000">$75 — 5.000 🪙</option><option value="10000">$150 — 10.000 🪙</option></select></label>
+   <option value="1000">${brl(15)} — 1.000 🪙</option><option value="2500">${brl(37.5)} — 2.500 🪙</option>
+   <option value="5000">${brl(75)} — 5.000 🪙</option><option value="10000">${brl(150)} — 10.000 🪙</option></select></label>
   <label>Qtd. <input id="wd-count" type="number" value="1" min="1" oninput="window.updateWdPreview()" /></label>
-  <label>Região <select id="wd-region"><option value="BR" selected>BR</option><option value="ID">ID</option><option value="IN">IN</option><option value="MX">MX</option><option value="PH">PH</option><option value="TH">TH</option></select></label>
  </div>
  <div id="wd-preview" class="limits"></div>
  <button class="cta" data-wdcreate>Sacar</button>
@@ -683,7 +685,7 @@ window.updateWdPreview = function () {
   const nominal = parseInt(document.getElementById('wd-card').value, 10) || 1000;
   const count = Math.max(1, parseInt(document.getElementById('wd-count').value, 10) || 1);
   const total = nominal * count, gross = total * 0.015;
-  el.innerHTML = `Saque: <b>${total} 🪙</b> = <b>$${gross.toFixed(2)}</b>`;
+  el.innerHTML = `Saque: <b>${total} 🪙</b> = <b>${brl(gross)}</b>`;
 };
 async function claimDaily() {
   if (!DAILY.can_claim) return;
@@ -722,7 +724,7 @@ async function createDeposit() {
     });
     const p = res.client_payload || {};
     const grossCoins = (res.amount_gross_minor || 0) / 100;
-    if (statusEl) statusEl.textContent = `Depósito: ${amount} 🪙 • pagamento $${(grossCoins * 0.015).toFixed(2)}`;
+    if (statusEl) statusEl.textContent = `Depósito: ${amount} 🪙 • pagamento ${brl(grossCoins * 0.015)}`;
     const qr = document.getElementById('qr');
     if (qr) qr.innerHTML = p.payment_url ? `<a class="cta wide" href="${esc(p.payment_url)}" target="_blank" rel="noopener">Abrir pagamento ↗</a>` : '';
     // поллинг статуса
@@ -746,7 +748,7 @@ async function createWithdraw() {
   const nominal = parseInt(document.getElementById('wd-card').value, 10) || 1000;
   const count = Math.max(1, parseInt(document.getElementById('wd-count').value, 10) || 1);
   const total = nominal * count;
-  const region = document.getElementById('wd-region').value || 'BR';
+  const region = 'BR'; // вывод только в Бразилию
   if (total < 1000) { if (el) el.textContent = 'Saque mínimo — 1 000 🪙'; return }
   if (S.gold < total) { if (el) el.textContent = 'Ouro insuficiente'; return }
   try {
