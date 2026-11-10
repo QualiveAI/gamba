@@ -1,8 +1,19 @@
 import json
+import math
 import random
 
 from app.config import settings
 from core.engine.ledger.ledger import post_entry
+
+MINES_RTP = 0.97
+
+
+def mines_mult(m: int, k: int, grid: int = 25) -> float:
+    """Множитель-лестница как в демо: honest formula с RTP 0.97."""
+    x = 1.0
+    for i in range(k):
+        x *= (grid - i) / (grid - m - i)
+    return math.floor(x * MINES_RTP * 100) / 100
 
 
 async def _user_click_weights(conn, user_id, grid_size):
@@ -23,6 +34,10 @@ async def _user_click_weights(conn, user_id, grid_size):
 
 async def start(conn, user, bet, mine_count, client_seed=None):
     grid_size = 25
+    if not (1 <= mine_count <= grid_size - 1):
+        raise ValueError("invalid mine_count")  # noqa: B904
+    if bet <= 0:
+        raise ValueError("invalid bet")  # noqa: B904
     mines = random.sample(range(grid_size), mine_count)
     cur = await conn.execute(
         "INSERT INTO mines_sessions (user_id, bet_units, mine_count, grid_size, mines, revealed, status) "  # noqa: E501
@@ -30,6 +45,7 @@ async def start(conn, user, bet, mine_count, client_seed=None):
         (user["id"], bet, mine_count, grid_size, json.dumps(mines), json.dumps([])),
     )
     sid = (await cur.fetchone())["id"]
+    await post_entry(conn, user["id"], "units", -bet, "mines_stake", f"mines:{sid}")
     await conn.commit()
     return {"session_id": sid, "grid_size": grid_size, "mine_count": mine_count}
 
@@ -58,7 +74,8 @@ async def reveal(conn, session_id, cell, user):
             (session_id,),
         )
         await conn.commit()
-        return {"hit_mine": True, "revealed": revealed, "bias_applied": False}
+        # позиции мин отдаём после взрыва — раунд закрыт, честный показ поля
+        return {"hit_mine": True, "revealed": revealed, "mines": mines, "bias_applied": False}
 
     revealed.append(cell)
     bet = int(row["bet_units"])
@@ -109,7 +126,7 @@ async def reveal(conn, session_id, cell, user):
 async def cashout(conn, session_id, user):
     row = await (
         await conn.execute(
-            "SELECT id, bet_units, revealed, status FROM mines_sessions WHERE id = %s",
+            "SELECT id, bet_units, mine_count, grid_size, revealed, status FROM mines_sessions WHERE id = %s",
             (session_id,),
         )
     ).fetchone()
@@ -117,9 +134,11 @@ async def cashout(conn, session_id, user):
         raise ValueError("invalid session")  # noqa: B904
     revealed = list(row["revealed"])
     bet = int(row["bet_units"])
-    payout = bet + int(bet * 0.2 * len(revealed))
+    if not revealed:
+        raise ValueError("nothing revealed")  # noqa: B904
+    payout = int(bet * mines_mult(int(row["mine_count"]), len(revealed), int(row["grid_size"])))
     await post_entry(
-        conn, user["id"], "units", payout - bet, "mines_cashout", f"mines:{session_id}"
+        conn, user["id"], "units", payout, "mines_cashout", f"mines:{session_id}:cash"
     )
     await conn.execute(
         "UPDATE mines_sessions SET status = 'cashed_out', payout_units = %s, ended_at = now() WHERE id = %s",  # noqa: E501

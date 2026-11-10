@@ -32,3 +32,4 @@ temp_vars
 Thumbs.db
 playwright-report/
 test-results/
+shots/

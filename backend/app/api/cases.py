@@ -17,24 +17,30 @@ async def list_cases(user=Depends(get_current_user)):  # noqa: B008  # noqa: B00
     async with get_conn() as conn:
         cases = await (
             await conn.execute(
-                "SELECT id, name, price_units, rtp_profile, currency FROM cases WHERE active = TRUE"
+                "SELECT id, name, price_units, rtp_profile, currency, cover FROM cases WHERE active = TRUE"
             )
         ).fetchall()
         out = []
         for c in cases:
             rewards = await (
                 await conn.execute(
-                    "SELECT id, reward_type, game_key, label, nominal_units, weight, region FROM case_rewards WHERE case_id = %s",  # noqa: E501
+                    "SELECT id, reward_type, game_key, label, nominal_units, weight, region, image, rarity FROM case_rewards WHERE case_id = %s",  # noqa: E501
                     (c["id"],),
                 )
             ).fetchall()
+            wsum = sum(float(r["weight"]) for r in rewards) or 1.0
             out.append(
                 {
                     "id": c["id"],
                     "name": c["name"],
                     "price_units": c["price_units"],
                     "rtp_profile": c["rtp_profile"],
-                    "rewards": [dict(r) for r in rewards],
+                    "currency": c["currency"] or "units",
+                    "cover": c["cover"],
+                    "rewards": [
+                        dict(r) | {"chance_pct": round(float(r["weight"]) / wsum * 100, 3)}
+                        for r in rewards
+                    ],
                 }
             )
         return out

@@ -64,7 +64,7 @@ async def my_inventory(user=Depends(get_current_user)):  # noqa: B008
     async with get_conn() as conn:
         rows = await (
             await conn.execute(
-                "SELECT id, label, game_key, currency, value_coins, rarity, status, created_at "
+                "SELECT id, label, game_key, currency, value_coins, rarity, image, status, created_at "
                 "FROM user_items WHERE user_id = %s AND status = 'active' "
                 "ORDER BY id DESC",
                 (user["id"],),
@@ -75,23 +75,41 @@ async def my_inventory(user=Depends(get_current_user)):  # noqa: B008
 
 @router.post("/inventory/{item_id}/sell")
 async def sell_item(item_id: int, user=Depends(get_current_user)):  # noqa: B008
-    # Продажа предметов отключена: монеты можно получить только в мини-играх,
-    # поставив предмет (ставка предметом -> выигрыш монетами)
-    raise HTTPException(
-        status_code=400,
-        detail="Venda desativada: jogue minijogos com o item para ganhar moedas",
-    )
+    """Продажа предмета за монеты по его стоимости (как в демо)."""
+    from core.engine.ledger.ledger import post_entry
+
+    async with get_conn() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT id, value_coins, currency FROM user_items "
+                "WHERE id = %s AND user_id = %s AND status = 'active' FOR UPDATE",
+                (item_id, user["id"]),
+            )
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="item not found")  # noqa: B904
+        value = int(row["value_coins"])
+        currency = row["currency"] or "units"
+        await conn.execute(
+            "UPDATE user_items SET status = 'sold' WHERE id = %s", (row["id"],)
+        )
+        await post_entry(conn, user["id"], currency, value, "item_sold", f"item:{row['id']}")
+        await conn.commit()
+    return {"sold": True, "value": value, "currency": currency}
 
 
 class UpgradeTarget(BaseModel):
     target_value: int
+    target_label: str | None = None
+    target_image: str | None = None
+    target_rarity: str | None = None
 
 
 @router.post("/inventory/{item_id}/upgrade")
 async def upgrade_item(  # noqa: B008
     item_id: int, body: UpgradeTarget, user=Depends(get_current_user)  # noqa: B008
 ):
-    """Апгрейд предмета: успех -> предмет дороже, провал -> предмет потерян."""
+    """Апгрейд предмета: успех -> целевой предмет из каталога, провал -> предмет потерян."""
     import secrets as _secrets
 
     async with get_conn() as conn:
@@ -114,9 +132,15 @@ async def upgrade_item(  # noqa: B008
         success = roll < chance
         if success:
             await conn.execute(
-                "UPDATE user_items SET label = %s, value_coins = %s, "
-                "rarity = 'Upgraded' WHERE id = %s",
-                (f"Upgraded {row['game_key'] or 'item'}", target, row["id"]),
+                "UPDATE user_items SET label = %s, value_coins = %s, rarity = %s, image = %s "
+                "WHERE id = %s",
+                (
+                    body.target_label or f"Upgraded {row['game_key'] or 'item'}",
+                    target,
+                    body.target_rarity or "Upgraded",
+                    body.target_image,
+                    row["id"],
+                ),
             )
         else:
             await conn.execute(
@@ -125,3 +149,49 @@ async def upgrade_item(  # noqa: B008
         await conn.commit()
     return {"success": success, "chance": round(chance, 4), "roll": round(roll, 4),
             "value": target if success else 0}
+
+
+@router.get("/wallet/history")
+async def wallet_history(user=Depends(get_current_user)):  # noqa: B008
+    """История операций: леджер + выпавшие предметы (как в демо-профиле)."""
+    async with get_conn() as conn:
+        ledger = await (
+            await conn.execute(
+                "SELECT delta, currency, reason, created_at FROM ledger_entries "
+                "WHERE user_id = %s ORDER BY id DESC LIMIT 25",
+                (user["id"],),
+            )
+        ).fetchall()
+        opens = await (
+            await conn.execute(
+                "SELECT o.created_at, r.label, r.image, r.rarity, c.currency "
+                "FROM case_openings o "
+                "JOIN case_rewards r ON r.id = o.reward_id "
+                "JOIN cases c ON c.id = o.case_id "
+                "WHERE o.user_id = %s ORDER BY o.id DESC LIMIT 10",
+                (user["id"],),
+            )
+        ).fetchall()
+    items = [
+        {
+            "t": r["created_at"].isoformat(),
+            "kind": "ledger",
+            "delta": int(r["delta"]),
+            "currency": r["currency"] or "units",
+            "text": r["reason"],
+        }
+        for r in ledger
+    ]
+    items += [
+        {
+            "t": r["created_at"].isoformat(),
+            "kind": "item",
+            "text": r["label"],
+            "image": r["image"],
+            "rarity": r["rarity"],
+            "currency": r["currency"] or "units",
+        }
+        for r in opens
+    ]
+    items.sort(key=lambda x: x["t"], reverse=True)
+    return items[:25]

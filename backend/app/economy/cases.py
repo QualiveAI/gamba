@@ -40,7 +40,7 @@ async def open_case(conn, user, case_id, client_seed):
         raise ValueError("case not found")  # noqa: B904
     rewards = await (
         await conn.execute(
-            "SELECT id, reward_type, game_key, label, nominal_units, weight, region FROM case_rewards WHERE case_id = %s",  # noqa: E501
+            "SELECT id, reward_type, game_key, label, nominal_units, weight, region, image, rarity FROM case_rewards WHERE case_id = %s",  # noqa: E501
             (case_id,),
         )
     ).fetchall()
@@ -101,8 +101,10 @@ async def open_case(conn, user, case_id, client_seed):
     roll = rng.roll()
     reward = await _pick_reward(rewards, roll, adjusted)
 
-    # Недельный/месячный кейс: нужен streak отметок 7/30 дней
-    need_streak = {"Caixa Semanal": 7, "Caixa Mensal": 30}.get(case["name"])
+    # Дорогие фрибет-кейсы: нужен streak отметок (>=3000 меди — 7 дней, >=12000 — 30)
+    need_streak = None
+    if (case["currency"] or "units") == "freebets":
+        need_streak = 30 if price >= 12000 else 7 if price >= 3000 else None
     if need_streak:
         marks = await (
             await conn.execute(
@@ -145,11 +147,11 @@ async def open_case(conn, user, case_id, client_seed):
         credit = int(round(credit * scale_credit))
     # Предмет уходит в инвентарь (продать/апгрейднуть/вывести может сам игрок)
     await conn.execute(
-        "INSERT INTO user_items (user_id, label, game_key, currency, value_coins, rarity) "
-        "VALUES (%s, %s, %s, %s, %s, %s)",
+        "INSERT INTO user_items (user_id, label, game_key, currency, value_coins, rarity, image) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
         (
             user["id"], reward["label"], reward["game_key"], case_currency,
-            credit, _rarity(credit, price),
+            credit, reward["rarity"] or _rarity(credit, price), reward["image"],
         ),
     )
     if credit >= 100:
@@ -189,6 +191,9 @@ async def open_case(conn, user, case_id, client_seed):
         "game_key": reward["game_key"],
         "nominal_units": int(reward["nominal_units"]),
         "item": reward["label"],
+        "image": reward["image"],
+        "rarity": reward["rarity"] or _rarity(credit, price),
+        "chance_pct": round(float(reward["weight"]) / W * 100, 3) if W else 0,
         "credit_units": credit,
         "server_seed": server_seed,
         "server_seed_hash": server_seed_hash,

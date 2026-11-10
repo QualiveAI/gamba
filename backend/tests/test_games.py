@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.db import get_conn
@@ -31,11 +33,22 @@ async def test_mines_bias_next_move():
             (999006, 1000, "user"),
         )
         user = await cur.fetchone()
+        uid = user["id"]
+        # инвариант леджера: сумма delta должна сходиться с балансом
+        await conn.execute(
+            "INSERT INTO ledger_entries (user_id, delta, reason, balance_after, currency) "
+            "VALUES (%s, 1000, 'test_setup', 1000, 'units')",
+            (uid,),
+        )
         await conn.commit()
         user = dict(user)
         user["predictor_mode"] = "user"
-        s = await start(conn, user, 200, 0)
+        s = await start(conn, user, 200, 1)
         sid = s["session_id"]
+        # фиксируем мину подальше от тестовых клеток, чтобы оба reveal прошли
+        await conn.execute(
+            "UPDATE mines_sessions SET mines = %s WHERE id = %s", (json.dumps([24]), sid)
+        )
         # first reveal no bias
         r1 = await reveal(conn, sid, 0, user)
         assert r1["bias_applied"] is False
