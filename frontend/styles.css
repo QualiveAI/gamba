@@ -213,7 +213,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .controls input[type=number]{appearance:textfield}
 .case-loot{display:flex;gap:5px;margin-top:2px}
 .case-loot img{width:38px;height:38px;border-radius:9px;object-fit:cover;background:var(--rs);border:1px solid var(--line)}
-.wd-logo{height:22px;border-radius:6px;opacity:.9;margin-left:auto}
+.logo-img{height:28px;width:auto;border-radius:8px;display:block}
 
 /* стабильный композитинг стаканчиков: без чёрных вспышек при clip-path+transition */
 .cup{will-change:left,transform}
