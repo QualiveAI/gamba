@@ -1,0 +1,2 @@
+# Shell-скрипты должны работать и после checkout с core.autocrlf=true.
+*.sh text eol=lf

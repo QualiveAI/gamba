@@ -11,44 +11,40 @@ FK-безопасный upsert: существующие case_rewards обнов
 import json
 import os
 import re
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import psycopg
 import psycopg.rows
 
-DSN = os.getenv(
-    "DATABASE_URL",
-    next(
-        line.split("=", 1)[1].strip()
-        for line in (Path(__file__).resolve().parent.parent / ".env")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.startswith("DATABASE_URL=")
-    ),
-)
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.catalog_localization import CASE_NAMES_PT_BR, item_name  # noqa: E402
+
+
+def get_dsn() -> str:
+    dsn = os.getenv("DATABASE_URL", "")
+    if not dsn:
+        raise SystemExit("Задайте DATABASE_URL явно; .env автоматически не читается")
+    env = os.getenv("ENV", "dev").lower()
+    parsed = urlsplit(dsn)
+    if env not in {"dev", "test"} and not parsed.path.endswith("_test"):
+        raise SystemExit("seed_demo разрешён только в dev/test или для *_test БД")
+    return dsn
+
 
 CATALOG = Path(__file__).resolve().parent / "demo_catalog.json"
 
 # ---------- PT-BR ----------
-CASE_NAMES = {
-    "brainrot": "Brainrot",
-    "brookhaven": "Brookhaven",
-    "dti": "Dress To Impress",
-    "garden": "Grow a Garden",
-    "nights": "99 Noites (Survival)",
-    "rivals": "Rivals",
-    "mm2": "Murder Mystery 2",
-    "adopt": "Adopt Me!",
-    "blox": "Blox Fruits",
-    "pets": "Pet Simulator 99",
-    "trash": "Caixa Lixo",
-    "daily": "Caixa Diária",
-    "weekly": "Caixa Semanal",
-    "monthly": "Caixa Mensal",
-}
+CASE_NAMES = CASE_NAMES_PT_BR
 
-# Полные переводы уникальных RU-названий (fallback — пословная замена ниже)
+# Совместимость для старых импортов; canonical map находится в app.catalog_localization.
 ITEM_NAMES = {
+    "50k Монет": "50 mil moedas",
+    "100k Монет": "100 mil moedas",
     "Fly Зелье": "Poção Fly",
     "Ride Зелье": "Poção Ride",
     "Huge Pet (Обычный)": "Huge Pet (Comum)",
@@ -71,7 +67,9 @@ ITEM_NAMES = {
     "Бриллианты (10M)": "Diamantes (10M)",
     "Бронзовая лейка": "Regador de bronze",
     "Бустер «Сигма-Фокус»": "Booster «Foco Sigma»",
-    "ДЖЕКПОТ (5 000 Робуксов + статус «Абсолютный Сигма» + Пет Босс-Мозг)": "JACKPOT (5.000 Robux + título «Sigma Absoluto» + Pet Boss Cérebro)",
+    "ДЖЕКПОТ (5 000 Робуксов + статус «Абсолютный Сигма» + Пет Босс-Мозг)": (
+        "JACKPOT (5.000 Robux + título «Sigma Absoluto» + Pet Boss Cérebro)"
+    ),
     "ДЖЕКПОТ (Corrupt Set)": "JACKPOT (Corrupt Set)",
     "ДЖЕКПОТ (Mega Neon Shadow)": "JACKPOT (Mega Neon Shadow)",
     "ДЖЕКПОТ (Permanent Dragon)": "JACKPOT (Permanent Dragon)",
@@ -131,6 +129,10 @@ ITEM_NAMES = {
     "Трактор": "Trator",
     "Улучшенный фонарик": "Lanterna melhorada",
     "Физ. Фрукт (Smoke)": "Fruta física (Smoke)",
+    "Фрукт (Magma)": "Fruta (Magma)",
+    "Фрукт (Quake)": "Fruta (Quake)",
+    "Фрукт (Buddha)": "Fruta (Buddha)",
+    "Фрукт (Kitsune)": "Fruta (Kitsune)",
     "Футболка «Я пережил понедельник»": "Camiseta «Sobrevivi à Segunda»",
     "Ховерборд": "Hoverboard",
     "Эмоция «Мьюинг»": "Emote «Mewing»",
@@ -149,11 +151,7 @@ NUM_RE = re.compile(r"(\d) (?=\d)")
 
 
 def translate(name: str) -> str:
-    if name in ITEM_NAMES:
-        return ITEM_NAMES[name]
-    out = WORD_RE.sub("Robux", name)
-    out = NUM_RE.sub(r"\1.", out)  # 1 000 -> 1.000
-    return out
+    return item_name(name)
 
 
 def avg(v) -> int:
@@ -161,19 +159,47 @@ def avg(v) -> int:
 
 
 # Картинки, добранные позже демо (пользовательские): assets/demo/<asset>.webp
-DEMO_ASSETS_DIR = Path(__file__).resolve().parents[2] / "frontend" / "assets" / "demo"
+FRONTEND_ASSETS_DIR = Path(__file__).resolve().parents[2] / "frontend" / "assets"
+DEMO_ASSETS_DIR = FRONTEND_ASSETS_DIR / "demo"
+
+# Canonical source prefixes для восстановленных пользовательских серий.
+# Они используются только если нормализованный WebP ещё не создан.
+SOURCE_PREFIXES = {
+    "nights": "99ночей",
+    "dti": "дти",
+    "garden": "гроугарден",
+    "pets": "петсим",
+    "trash": "мусор",
+    "daily": "день",
+    "weekly": "неделя",
+    "monthly": "месяц",
+}
+
+
+def _image_candidates(asset: str) -> list[tuple[Path, str]]:
+    candidates = [(DEMO_ASSETS_DIR / f"{asset}.webp", f"assets/demo/{asset}.webp")]
+    for prefix, source_prefix in SOURCE_PREFIXES.items():
+        if asset.startswith(prefix):
+            number = asset[len(prefix) :]
+            for suffix in (".png", ".webp", ".jpg", ".jpeg"):
+                source = FRONTEND_ASSETS_DIR / f"{source_prefix}{number}{suffix}"
+                candidates.append((source, f"assets/{source.name}"))
+            break
+    return candidates
 
 
 def fix_missing_images(data: dict) -> int:
-    """Предметам без картинки подставить assets/demo/<asset>.webp, если файл есть."""
+    """Подставить нормализованный или canonical source image без изменения экономики."""
     fixed = 0
-    for c in data["cases"]:
-        for i in c["items"]:
-            if not i.get("image") and i.get("asset"):
-                cand = DEMO_ASSETS_DIR / f"{i['asset']}.webp"
-                if cand.exists():
-                    i["image"] = f"assets/demo/{i['asset']}.webp"
+    for case in data["cases"]:
+        for item in case["items"]:
+            if item.get("image") or not item.get("asset"):
+                continue
+            for candidate, public_path in _image_candidates(item["asset"]):
+                if candidate.is_file():
+                    item["image"] = public_path
                     fixed += 1
+                    break
     return fixed
 
 
@@ -182,7 +208,7 @@ def main() -> None:
     fixed = fix_missing_images(data)
     if fixed:
         print(f"подставлено картинок из assets/demo: {fixed}")
-    with psycopg.connect(DSN, row_factory=psycopg.rows.dict_row) as conn:
+    with psycopg.connect(get_dsn(), row_factory=psycopg.rows.dict_row) as conn:
         keep = [CASE_NAMES[c["id"]] for c in data["cases"]]
         conn.execute("UPDATE cases SET active = FALSE WHERE name <> ALL(%s)", (keep,))
         for c in data["cases"]:
@@ -198,9 +224,7 @@ def main() -> None:
             # Кулдауны фрибет-кейсов — защита экономики меди
             cooldown = {"weekly": 168, "monthly": 720}.get(c["id"], 0)
 
-            row = conn.execute(
-                "SELECT id FROM cases WHERE name = %s", (name,)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM cases WHERE name = %s", (name,)).fetchone()
             if row:
                 cid = row["id"]
                 conn.execute(
@@ -210,7 +234,8 @@ def main() -> None:
                 )
             else:
                 cid = conn.execute(
-                    "INSERT INTO cases (name, price_units, currency, cooldown_hours, rtp_profile, active, cover) "
+                    "INSERT INTO cases (name, price_units, currency, cooldown_hours, "
+                    "rtp_profile, active, cover) "
                     "VALUES (%s,%s,%s,%s,%s,TRUE,%s) RETURNING id",
                     (name, price, currency, cooldown, json.dumps({"standard": rtp}), c["cover"]),
                 ).fetchone()["id"]

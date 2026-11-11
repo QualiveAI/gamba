@@ -1,40 +1,26 @@
-import asyncio
-import sys
+import pytest
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-from app.db import close_pool, get_conn, init_pool
+from app.db import get_conn
 from core.rewards.welcome import grant_welcome
 
 
-async def main():
-    await init_pool()
-    try:
-        async with get_conn() as conn:
-            await conn.execute("DELETE FROM users WHERE telegram_id = %s", (999022,))
+@pytest.mark.asyncio
+async def test_welcome_is_idempotent():
+    async with get_conn() as conn:
+        cur = await conn.execute(
+            "INSERT INTO users (telegram_id) VALUES (%s) RETURNING id", (8899022,)
+        )
+        user = dict(await cur.fetchone())
+        await conn.commit()
+        first = await grant_welcome(conn, user)
+        second = await grant_welcome(conn, user)
+        assert first["granted"] is True
+        assert second["granted"] is False
+        rows = await (
             await conn.execute(
-                "DELETE FROM ledger_entries WHERE user_id IN (SELECT id FROM users WHERE telegram_id = %s)",  # noqa: E501
-                (999022,),
+                "SELECT delta FROM ledger_entries WHERE user_id=%s AND reason='welcome_freebet'",
+                (user["id"],),
             )
-            cur = await conn.execute(
-                "INSERT INTO users (telegram_id, balance_units, balance_freebets) VALUES (%s, %s, %s) RETURNING id",  # noqa: E501
-                (999022, 0, 0),
-            )
-            uid = (await cur.fetchone())["id"]
-            await conn.commit()
-            user = {"id": uid}
-            r1 = await grant_welcome(conn, user)
-            r2 = await grant_welcome(conn, user)
-            print(r1, r2)
-            assert r1["granted"] is True
-            assert r2["granted"] is False
-            await conn.execute("DELETE FROM ledger_entries WHERE user_id = %s", (uid,))
-            await conn.execute("DELETE FROM users WHERE id = %s", (uid,))
-            await conn.commit()
-    finally:
-        await close_pool()
-
-
-asyncio.run(main())
-print("welcome idempotent ok")
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["delta"] == first["amount"]

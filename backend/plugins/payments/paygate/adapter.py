@@ -1,125 +1,79 @@
-"""PayGate.to — карточный рельс без KYC: игрок платит картой/Apple/Google Pay,
-выплата USDC приходит мгновенно на наш self-custodial Polygon-кошелёк.
+"""PayGate.to Cards: точный request-контракт без небезопасного live settlement.
 
-Схема API (без ключей и регистрации):
-1) GET control/wallet.php?address={наш USDC Polygon}&callback={callback c уникальным параметром}
-   -> address_in (зашифрованный), polygon_address_in (читаемый), ipn_token
-2) редирект игрока: GET checkout.paygate.to/process-payment.php
-   (address, amount USD, provider, email, currency)
-3) колбэк: GET на наш callback + value_coin, coin, txid_in, txid_out,
-   address_in (читаемый), value_forwarded_coin.
-   PayGate повторяет колбэк, пока не ответим ok.
-
-Верификация зачисления — на уровне роутера: address_in из колбэка должен
-совпасть с polygon_address_in интента, value_forwarded_coin >= порога.
-Документация: paygate.to/docs
+Источник: https://paygate.to/docs/payment-gateway-api/index.html
+GET callback не подписан; ipn_token служит поддержке, не доказывает оплату.
+До независимой сверки on-chain/merchant live намеренно недоступен.
 """
 
-import json
-import os
-from urllib.parse import quote
+from decimal import Decimal
+from urllib.parse import urlencode, urlsplit
 
-import httpx
-
-from core.contracts.payment import PaymentIntent, PaymentStatus, WebhookOutcome
+from core.contracts.payment import PaymentError, PaymentMethod, WebhookOutcome
+from core.payments.sandbox import SandboxAdapter
 
 
-class PayGateError(Exception):
+class PayGateError(PaymentError):
     pass
 
 
-class PayGateAdapter:
-    MANIFEST = {"key": "paygate", "type": "payment", "geo": "*", "version": "1"}
+class PayGateAdapter(SandboxAdapter):
+    MANIFEST = {"key": "paygate", "type": "payment", "geo": "*", "version": "2"}
     rail_key = "paygate"
     geo = "*"
-    methods = ["card"]
+    methods = [PaymentMethod("card", "Cartão")]
     refund_supported = False
 
+    def client_fee_percent(self) -> Decimal:
+        from core.payments.policy import PricingConfig
+
+        return PricingConfig.load().fee_percent
+
     @staticmethod
-    def _cfg() -> dict:
+    def wallet_request(*, intent_id: str, treasury_address: str, callback_base: str) -> dict:
+        """Только построение официального GET; transport не подключён."""
+        callback = urlsplit(callback_base)
+        if callback.scheme != "https" or not callback.netloc or callback.query or callback.fragment:
+            raise PayGateError("invalid_callback_base")
+        if not intent_id or not treasury_address.startswith("0x") or len(treasury_address) != 42:
+            raise PayGateError("invalid_paygate_destination")
         return {
-            "api_base": os.getenv("PAYGATE_API_BASE", "https://api.paygate.to"),
-            "checkout_base": os.getenv("PAYGATE_CHECKOUT_BASE", "https://checkout.paygate.to"),
-            "wallet": os.getenv("PAYGATE_WALLET", ""),
-            "callback_base": os.getenv("PAYGATE_CALLBACK_BASE", ""),
-            "provider": os.getenv("PAYGATE_PROVIDER", "hosted"),
+            "method": "GET",
+            "url": "https://api.paygate.to/control/wallet.php",
+            "params": {
+                "address": treasury_address,
+                "callback": callback_base.rstrip("/")
+                + "/webhooks/paygate?"
+                + urlencode({"intent_id": intent_id}),
+            },
         }
 
-    def client_fee_percent(self) -> float:
-        # Комиссию платит клиент: закладываем её в сумму сверху
-        return float(os.getenv("PAYGATE_FEE_PERCENT", "20.0"))
-
-    def create_payment(
-        self, user_id: int, amount_minor: int, currency: str, idempotency_key: str
-    ) -> PaymentIntent:
-        cfg = self._cfg()
-        if not cfg["wallet"] or not cfg["callback_base"]:
-            # Кошелёк не настроен: mock-ссылка для тестов/staging
-            return PaymentIntent(
-                idempotency_key,
-                self.rail_key,
-                amount_minor,
-                currency,
-                {
-                    "payment_url": f"https://paygate.example/pay/{idempotency_key}",
-                    "polygon_address_in": "MOCK",
-                    "expected_usdc": amount_minor / 100.0,
-                    "mock": True,
-                },
-            )
-        callback = f"{cfg['callback_base']}/webhooks/paygate?intent_id={idempotency_key}"
-        resp = httpx.get(
-            f"{cfg['api_base']}/control/wallet.php",
-            params={"address": cfg["wallet"], "callback": callback},
-            timeout=15.0,
-        )
-        data = resp.json()
-        address_in = data.get("address_in", "")
-        polygon_address_in = data.get("polygon_address_in", "")
-        if not address_in or not polygon_address_in:
-            raise PayGateError(f"paygate wallet.php failed: {data}")
-        amount_usd = round(amount_minor / 100.0, 2)
-        payment_url = (
-            f"{cfg['checkout_base']}/process-payment.php"
-            f"?address={quote(address_in, safe='')}"
-            f"&amount={amount_usd}"
-            f"&provider={cfg['provider']}"
-            f"&email={quote(f'user{user_id}@windrop.local', safe='')}"
-            f"&currency=USD"
-        )
-        return PaymentIntent(
-            intent_id=idempotency_key,
-            rail=self.rail_key,
-            amount_minor=amount_minor,
-            currency=currency,
-            client_payload={
-                "payment_url": payment_url,
-                "polygon_address_in": polygon_address_in,
-                "expected_usdc": amount_usd,
-            },
+    @staticmethod
+    def checkout_url(
+        *, encrypted_address: str, amount_minor: int, currency: str, email: str, provider: str
+    ) -> str:
+        if (
+            type(amount_minor) is not int
+            or amount_minor <= 0
+            or currency not in ("USD", "EUR", "BRL")
+        ):
+            raise PayGateError("invalid_paygate_amount")
+        if not encrypted_address or not provider or not email:
+            raise PayGateError("paygate_checkout_incomplete")
+        amount = format(Decimal(amount_minor) / 100, ".2f")
+        return "https://checkout.paygate.to/process-payment.php?" + urlencode(
+            {
+                "address": encrypted_address,
+                "amount": amount,
+                "provider": provider,
+                "email": email,
+                "currency": currency,
+            }
         )
 
-    def poll_payment(self, intent_id: str, provider_ref: str | None = None) -> PaymentStatus:
-        # У PayGate нет серверного status-эндпоинта: статус знаем только из колбэка
-        return PaymentStatus(intent_id, "pending", 0)
-
-    def handle_webhook(self, headers: dict, body) -> WebhookOutcome:
-        # Колбэк PayGate — GET с query-параметрами; роутер передаёт их словарём
-        data = body if isinstance(body, dict) else json.loads(body)
-        txid_in = str(data.get("txid_in", "") or "")
-        try:
-            value = float(data.get("value_forwarded_coin", "") or data.get("value_coin", "") or 0)
-        except ValueError:
-            value = 0.0
-        if txid_in and value > 0:
-            status = "succeeded"
-        else:
-            status = "pending" if not data.get("intent_id") else "failed"
-        return WebhookOutcome(
-            intent_id=str(data.get("intent_id")) if data.get("intent_id") else None,
-            event_id=txid_in or f"paygate:{data.get('address_in', '')}",
-            status=status,
-            credited=False,
+    def handle_webhook(self, headers: dict, body: bytes) -> WebhookOutcome:
+        # Никакой подделки HMAC: публичная спецификация его не определяет.
+        raise PayGateError(
+            "paygate_unverified_callback", "Confirmação do cartão indisponível.", 503
         )
 
 

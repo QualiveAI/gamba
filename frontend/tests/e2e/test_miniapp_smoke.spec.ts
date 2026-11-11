@@ -1,22 +1,5 @@
 import { test, expect } from "@playwright/test";
-
-// Базовые моки для всех тестов: auth, баланс, бренд, гео
-async function mockBase(page) {
-  await page.route("**/auth/telegram", (route) =>
-    route.fulfill({ json: { access_token: "test-jwt" } })
-  );
-  await page.route("**/wallet", (route) =>
-    route.fulfill({ json: { units_minor: 1000, freebets_units: 500 } })
-  );
-  await page.route("**/meta/tenant", (route) =>
-    route.fulfill({
-      json: { tenant: "default", brand: { name: "ROBLOXWINDROP", logo_url: "", primary_color: "#c8102e" }, domains: {}, geos: ["BR"], games: ["roblox"] },
-    })
-  );
-  await page.route("**/meta/geos", (route) =>
-    route.fulfill({ json: [{ geo: "BR", methods: ["card", "crypto"] }] })
-  );
-}
+import { mockBase } from './commerce-mocks';
 
 const CASE_JSON = {
   id: 1,
@@ -25,9 +8,13 @@ const CASE_JSON = {
   currency: "units",
   cover: null,
   rewards: [
-    { id: 11, label: "10 Robux", nominal_units: 10, weight: 16, chance_pct: 16, image: null, rarity: "common" },
-    { id: 12, label: "Pet Gigachad Doge", nominal_units: 500, weight: 1.5, chance_pct: 1.5, image: null, rarity: "epic" },
-    { id: 13, label: "JACKPOT 5.000 Robux", nominal_units: 5000, weight: 0.001, chance_pct: 0.001, image: null, rarity: "hero" },
+    { id: 11, label: "Comum barato", nominal_units: 10, weight: 1, chance_pct: 1, image: null, rarity: "common" },
+    { id: 12, label: "Épico barato", nominal_units: 50, weight: 1, chance_pct: 1, image: null, rarity: "epic" },
+    { id: 13, label: "Herói barato", nominal_units: 5, weight: 1, chance_pct: 1, image: null, rarity: "hero" },
+    { id: 14, label: "Lenda barata", nominal_units: 1, weight: 1, chance_pct: 1, image: null, rarity: "legend" },
+    { id: 15, label: "Épico caro", nominal_units: 500, weight: 1, chance_pct: 1, image: null, rarity: "epic" },
+    { id: 16, label: "Normal", nominal_units: 900, weight: 1, chance_pct: 1, image: null, rarity: "normal" },
+    { id: 17, label: "Comum caro", nominal_units: 1000, weight: 1, chance_pct: 1, image: null, rarity: "common" },
   ],
 };
 
@@ -37,23 +24,32 @@ test("cases_list_and_open_case", async ({ page }) => {
   await page.route("**/cases/1/open", (route) =>
     route.fulfill({
       json: {
-        id: 1, item: "Pet Gigachad Doge", rarity: "epic", image: null,
-        nominal_units: 500, chance_pct: 1.5, credit_units: 500,
+        id: 1, item: "Épico barato", rarity: "epic", image: null,
+        nominal_units: 50, chance_pct: 1, credit_units: 50,
       },
     })
   );
   await page.route("**/inventory", (route) =>
-    route.fulfill({ json: [{ id: 77, label: "Pet Gigachad Doge", value_coins: 500, rarity: "epic", currency: "units", image: null }] })
+    route.fulfill({ json: [{ id: 77, label: "Épico barato", value_coins: 50, rarity: "epic", currency: "units", image: null }] })
   );
   await page.goto("/");
   await expect(page.locator(".case")).toHaveCount(1);
   await expect(page.locator(".case b")).toHaveText("Brainrot");
   await page.click(".case");
   await expect(page.locator("[data-open]")).toBeVisible();
+  await expect(page.locator(".items .item b")).toHaveText([
+    "Herói barato",
+    "Lenda barata",
+    "Épico caro",
+    "Épico barato",
+    "Normal",
+    "Comum caro",
+    "Comum barato",
+  ]);
   await page.click("[data-open]");
   // рулетка ~4.5s, затем модалка выигрыша
   await expect(page.locator(".win-img")).toBeVisible({ timeout: 10000 });
-  await expect(page.locator(".win h2")).toHaveText("Pet Gigachad Doge");
+  await expect(page.locator(".win h2")).toHaveText("Épico barato");
   await page.click("[data-close]");
   // после закрытия остаёмся на странице кейса
   await expect(page.locator("[data-open]")).toBeVisible();
@@ -136,12 +132,18 @@ test("profile_daily_deposit_withdraw", async ({ page }) => {
   await page.click('[data-tab="profile"]');
   // check-in
   await expect(page.locator("[data-claim]")).toBeEnabled();
-  // депозит: методы + сумма
-  await expect(page.locator("#deposit-methods .dep-method")).toHaveCount(2);
+  // Безопасный default: все четыре способа показаны, но сервер их выключил.
+  await expect(page.locator("#deposit-methods .dep-method")).toHaveCount(4);
+  await expect(page.locator("#deposit-methods .dep-method:disabled")).toHaveCount(4);
   await expect(page.locator("#dep-amount")).toHaveValue("100");
-  // вывод: селект карт и предпросмотр
-  await expect(page.locator("#wd-card")).toBeVisible();
-  await expect(page.locator("#wd-preview")).toContainText("R$ 81,00");
+  await expect(page.locator('[data-depquote]')).toBeDisabled();
+  // Никаких фиктивных номиналов, количества или обещаний банковского вывода.
+  await expect(page.locator('#withdraw h2')).toHaveText('Trocar moedas por gift card');
+  await expect(page.locator("#wd-card")).toBeDisabled();
+  await expect(page.locator("#wd-preview")).toContainText('Nenhuma moeda foi gasta');
+  await expect(page.locator('[data-giftpreview]')).toBeDisabled();
+  await expect(page.locator('#wd-count')).toHaveCount(0);
+  await expect(page.locator('#create-personal-bot')).toHaveAttribute('href', 'https://t.me/windrop_bot?start=managed');
   // рефералка
   await expect(page.locator("#reflink")).toHaveValue(/WDTEST/);
 });

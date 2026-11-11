@@ -1,240 +1,239 @@
-from datetime import UTC, datetime, timedelta
+"""Атомарный обмен монет на один заранее загруженный код.
 
-from app.antifraud.rules import evaluate
+Ledger не меняется глобально. Все записи одного обмена находятся внутри conn.transaction().
+Старые withdrawals не содержат однозначного SKU mapping и доступны только для просмотра.
+"""
+
 from app.giftcards import service as giftcard_service
-from app.giftcards.verify import schedule_verify
+from app.giftcards.security import (
+    GiftCardError,
+    authenticated_user,
+    enabled_mode,
+    positive_integer,
+    request_key,
+)
 from core.engine.ledger.ledger import post_entry
 
-WITHDRAWAL_MIN_UNITS = 100000
-DAILY_LIMIT = 1000000
-WEEKLY_LIMIT = 200000
 
-
-async def _recent_sum(conn, user_id, days):
-    row = await (
+async def redeem(conn, user: dict, *, sku_id: int, idempotency_key: str) -> dict:
+    user_id, telegram_id, scope, bot_id = authenticated_user(user)
+    positive_integer(sku_id)
+    idempotency_key = request_key(idempotency_key)
+    async with conn.transaction():
+        # Порядок блокировок единый: user -> order -> inventory. Повторы одного user сериализуются.
+        owner = await (
+            await conn.execute(
+                "SELECT id, telegram_id, is_guest, balance_units "
+                "FROM users WHERE id = %s FOR UPDATE",
+                (user_id,),
+            )
+        ).fetchone()
+        if (
+            owner is None
+            or owner["is_guest"]
+            or owner["telegram_id"] != telegram_id
+            or owner["telegram_id"] <= 0
+        ):
+            raise GiftCardError("telegram_required", 403)
+        previous = await (
+            await conn.execute(
+                "SELECT id, sku_id FROM giftcard_redemptions "
+                "WHERE user_id = %s AND idempotency_key = %s",
+                (user_id, idempotency_key),
+            )
+        ).fetchone()
+        if previous is not None:
+            if int(previous["sku_id"]) != sku_id:
+                raise GiftCardError("idempotency_conflict", 409)
+            return await giftcard_service.get_redemption(
+                conn, redemption_id=int(previous["id"]), user_id=user_id
+            )
+        mode = enabled_mode()
+        sku = await (
+            await conn.execute(
+                "SELECT id, operator_sku, brand, region, card_currency, face_value_minor, "
+                "coin_cost, sandbox, active FROM giftcard_skus WHERE id = %s FOR SHARE",
+                (sku_id,),
+            )
+        ).fetchone()
+        if sku is None or not sku["active"] or sku["sandbox"] != (mode == "sandbox"):
+            raise GiftCardError("sku_unavailable", 409)
+        inventory_id = await giftcard_service.reserve(conn, sku_id=sku_id)
+        if int(owner["balance_units"]) < int(sku["coin_cost"]):
+            raise GiftCardError("insufficient_balance", 409)
+        order = await (
+            await conn.execute(
+                "INSERT INTO giftcard_redemptions "
+                "(user_id, telegram_id, sku_id, inventory_id, idempotency_key, operator_sku, "
+                "brand, region, card_currency, face_value_minor, coin_cost, "
+                "sandbox, auth_scope, bot_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    user_id,
+                    telegram_id,
+                    sku_id,
+                    inventory_id,
+                    idempotency_key,
+                    sku["operator_sku"],
+                    sku["brand"],
+                    sku["region"],
+                    sku["card_currency"],
+                    sku["face_value_minor"],
+                    sku["coin_cost"],
+                    sku["sandbox"],
+                    scope,
+                    bot_id,
+                ),
+            )
+        ).fetchone()
+        redemption_id = int(order["id"])
         await conn.execute(
-            "SELECT COALESCE(SUM(amount_units),0) AS s FROM withdrawals "
-            "WHERE user_id = %s AND status IN ('pending','approved','frozen') AND created_at > now() - make_interval(days => %s)",  # noqa: E501
-            (user_id, days),
+            "UPDATE giftcard_inventory SET status = 'assigned', assigned_redemption_id = %s, "
+            "assigned_at = now() WHERE id = %s AND status = 'available'",
+            (redemption_id, inventory_id),
         )
-    ).fetchone()
-    return int(row["s"]) if row else 0
+        try:
+            await post_entry(
+                conn,
+                user_id,
+                "units",
+                -int(sku["coin_cost"]),
+                "giftcard_redemption",
+                f"giftcard:{redemption_id}:debit",
+            )
+        except (ValueError, RuntimeError):
+            raise GiftCardError("ledger_error", 409) from None
+        from app.bot.outbox import enqueue
 
-
-async def _should_freeze(conn, user, amount, region):
-    user_id = user["id"] if isinstance(user, dict) else user.id
-    # withdrawal within 1h of deposit
-    row = await (
-        await conn.execute(
-            "SELECT created_at FROM events WHERE user_id = %s AND event_type = 'deposit' ORDER BY created_at DESC LIMIT 1",  # noqa: E501
-            (user_id,),
+        await enqueue(
+            conn,
+            kind="giftcard_delivery",
+            user_id=user_id,
+            payload={"redemption_id": redemption_id},
+            dedupe_key=f"giftcard:{redemption_id}:delivery",
+            bot_id=bot_id,
         )
-    ).fetchone()
-    if row and (datetime.now(UTC) - row["created_at"]).total_seconds() < 3600:
-        return "withdrawal within 1h of deposit"
-    # region mismatch
-    user_region = user.get("region") if isinstance(user, dict) else getattr(user, "region", None)
-    if user_region and user_region != region:
-        return "region mismatch"
-    return None
-
-
-async def request(conn, user, amount, region):
-    user_id = user["id"] if isinstance(user, dict) else user.id
-    created = (
-        user.get("created_at") if isinstance(user, dict) else getattr(user, "created_at", None)
-    )  # noqa: E501
-    if created is not None:
-        if isinstance(created, str):
-            created = datetime.fromisoformat(created.replace("Z", "+00:00"))
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=UTC)
-        if (datetime.now(UTC) - created).total_seconds() < 86400:
-            raise ValueError("account too new")  # noqa: B904
-    if amount < WITHDRAWAL_MIN_UNITS:
-        raise ValueError("below minimum")  # noqa: B904
-    daily = await _recent_sum(conn, user_id, 1)
-    if daily + amount > DAILY_LIMIT:
-        raise ValueError("daily limit exceeded")  # noqa: B904
-    weekly = await _recent_sum(conn, user_id, 7)
-    if weekly + amount > WEEKLY_LIMIT:
-        raise ValueError("weekly limit exceeded")  # noqa: B904
-    user_units = (
-        user.get("balance_units") if isinstance(user, dict) else getattr(user, "balance_units", 0)
-    )
-    user_freebets = (
-        user.get("balance_freebets")
-        if isinstance(user, dict)
-        else getattr(user, "balance_freebets", 0)
-    )
-    if (user_units or 0) == 0 and (user_freebets or 0) > 0:
-        raise ValueError("risk blocked")  # noqa: B904
-    risk = await evaluate(conn, user, region)
-    if risk.level == "high":
-        raise ValueError("high risk")  # noqa: B904
-    freeze_reason = await _should_freeze(conn, user, amount, region)
-    try:
-        code_id = await giftcard_service.reserve(conn, user_id, region, amount)
-    except ValueError as e:
-        raise ValueError(str(e))  # noqa: B904
-    await post_entry(conn, user_id, "units", -int(amount), "withdrawal_request", "withdrawal")
-    status = "frozen" if freeze_reason else "pending"
-    cur = await conn.execute(
-        "INSERT INTO withdrawals (user_id, amount_units, region, status, code_id, antifraud_score, hold_until) "  # noqa: E501
-        "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-        (
-            user_id,
-            amount,
-            region,
-            status,
-            code_id,
-            risk.level,
-            datetime.now(UTC) + timedelta(days=1),
-        ),  # noqa: E501
-    )
-    wid = (await cur.fetchone())["id"]
-    if freeze_reason:
-        await conn.execute(
-            "INSERT INTO withdrawal_freezes (withdrawal_id, reason) VALUES (%s, %s)",
-            (wid, freeze_reason),  # noqa: E501
+        return await giftcard_service.get_redemption(
+            conn, redemption_id=redemption_id, user_id=user_id
         )
-    await conn.commit()
-    return wid
+
+
+async def reject_redemption(conn, *, redemption_id: int, reason: str = "operator_rejected") -> dict:
+    """Возврат один раз и только до первого committed prepare_delivery."""
+    positive_integer(redemption_id)
+    if reason not in ("operator_rejected", "requested_by_owner", "risk_review"):
+        raise GiftCardError("invalid_request")
+    blocked = False
+    async with conn.transaction():
+        owner = await (
+            await conn.execute(
+                "SELECT user_id FROM giftcard_redemptions WHERE id = %s", (redemption_id,)
+            )
+        ).fetchone()
+        if owner is None:
+            raise GiftCardError("not_found", 404)
+        user_id = int(owner["user_id"])
+        await conn.execute("SELECT id FROM users WHERE id = %s FOR UPDATE", (user_id,))
+        row = await (
+            await conn.execute(
+                "SELECT r.*, i.status AS inventory_status, i.assigned_redemption_id "
+                "FROM giftcard_redemptions r JOIN giftcard_inventory i ON i.id = r.inventory_id "
+                "WHERE r.id = %s FOR UPDATE OF r, i",
+                (redemption_id,),
+            )
+        ).fetchone()
+        if row["status"] == "rejected":
+            return {"id": redemption_id, "status": "rejected", "refunded": True}
+        if row["status"] != "pending" or row["delivery_started_at"] is not None:
+            if row["status"] == "delivering":
+                await conn.execute(
+                    "UPDATE giftcard_redemptions SET status = 'manual_review', updated_at = now() "
+                    "WHERE id = %s",
+                    (redemption_id,),
+                )
+            blocked = True
+        elif (
+            row["inventory_status"] != "assigned"
+            or row["assigned_redemption_id"] != redemption_id
+            or row["refunded_at"] is not None
+        ):
+            await conn.execute(
+                "UPDATE giftcard_redemptions SET status = 'manual_review', updated_at = now() "
+                "WHERE id = %s",
+                (redemption_id,),
+            )
+            blocked = True
+        else:
+            try:
+                await post_entry(
+                    conn,
+                    user_id,
+                    "units",
+                    int(row["coin_cost"]),
+                    "giftcard_redemption_refund",
+                    f"giftcard:{redemption_id}:refund",
+                )
+            except (ValueError, RuntimeError):
+                raise GiftCardError("ledger_error", 409) from None
+            await conn.execute(
+                "UPDATE giftcard_redemptions SET status = 'rejected', refunded_at = now(), "
+                "rejection_reason = %s, updated_at = now() WHERE id = %s",
+                (reason, redemption_id),
+            )
+            await conn.execute(
+                "UPDATE giftcard_inventory SET status = 'available', "
+                "assigned_redemption_id = NULL, "
+                "assigned_at = NULL WHERE id = %s AND assigned_redemption_id = %s",
+                (row["inventory_id"], redemption_id),
+            )
+    if blocked:
+        raise GiftCardError("manual_review_required", 409)
+    # В очереди может остаться событие; prepare_delivery(rejected) всегда возвращает None.
+    return {"id": redemption_id, "status": "rejected", "refunded": True}
+
+
+async def admin_redemptions(conn, *, status: str | None = None) -> list[dict]:
+    allowed = {"pending", "delivering", "issued", "rejected", "manual_review"}
+    if status is not None and status not in allowed:
+        raise GiftCardError("invalid_request")
+    query = (
+        "SELECT id, user_id, sku_id, operator_sku, brand, region, card_currency, "
+        "face_value_minor, coin_cost, sandbox, status, created_at, updated_at, "
+        "delivery_started_at, delivered_at, refunded_at, rejection_reason "
+        "FROM giftcard_redemptions"
+    )
+    parameters = ()
+    if status is not None:
+        query += " WHERE status = %s"
+        parameters = (status,)
+    rows = await (await conn.execute(query + " ORDER BY id DESC LIMIT 200", parameters)).fetchall()
+    return [dict(row) for row in rows]
+
+
+async def request(conn, user, amount=None, region=None, *, sku_id=None, idempotency_key=None):
+    """Совместимое имя; старый amount/region не является SKU mapping."""
+    if amount is not None or region is not None or sku_id is None or idempotency_key is None:
+        raise GiftCardError("legacy_read_only", 409)
+    return await redeem(conn, user, sku_id=sku_id, idempotency_key=idempotency_key)
 
 
 async def approve(conn, withdrawal_id):
-    row = await (
-        await conn.execute(
-            "SELECT id, user_id, code_id, amount_units, status FROM withdrawals WHERE id = %s FOR UPDATE",  # noqa: E501
-            (withdrawal_id,),  # noqa: E501
-        )
-    ).fetchone()
-    if row is None:
-        raise ValueError("withdrawal not found")  # noqa: B904
-    if row["status"] not in ("pending", "frozen"):
-        raise ValueError("not approvable")  # noqa: B904
-    # unfreeze if frozen
-    await conn.execute(
-        "UPDATE withdrawals SET status = 'approved', decided_at = now() WHERE id = %s",
-        (withdrawal_id,),  # noqa: E501
-    )
-    code = await giftcard_service.issue(conn, row["code_id"])
-    fee = int(row["amount_units"] * 0.20)
-    await conn.execute("UPDATE withdrawals SET fee_units = %s WHERE id = %s", (fee, withdrawal_id))
-    await schedule_verify(conn, row["code_id"])
-    await conn.commit()
-    return code
+    raise GiftCardError("legacy_read_only", 409)
 
 
 async def reject(conn, withdrawal_id, reason):
-    row = await (
-        await conn.execute(
-            "SELECT id, user_id, amount_units, code_id, status FROM withdrawals WHERE id = %s FOR UPDATE",  # noqa: E501
-            (withdrawal_id,),  # noqa: E501
-        )
-    ).fetchone()
-    if row is None:
-        raise ValueError("withdrawal not found")  # noqa: B904
-    if row["status"] not in ("pending", "frozen"):
-        raise ValueError("not rejectable")  # noqa: B904
-    await conn.execute(
-        "UPDATE gift_codes SET status = 'available', reserved_by = NULL, reserved_at = NULL WHERE id = %s",  # noqa: E501
-        (row["code_id"],),
-    )
-    await post_entry(
-        conn,
-        row["user_id"],
-        int(row["amount_units"]),
-        "withdrawal_reject_refund",
-        f"withdrawal:{withdrawal_id}",
-    )  # noqa: E501
-    await conn.execute(
-        "UPDATE withdrawals SET status = 'rejected', reason = %s, decided_at = now() WHERE id = %s",
-        (reason, withdrawal_id),
-    )
-    await conn.commit()
-    return True
+    raise GiftCardError("legacy_read_only", 409)
 
 
 async def unfreeze(conn, withdrawal_id):
-    await conn.execute(
-        "UPDATE withdrawal_freezes SET unfrozen_at = now() WHERE withdrawal_id = %s",
-        (withdrawal_id,),  # noqa: E501
-    )
-    await conn.execute("UPDATE withdrawals SET status = 'pending' WHERE id = %s", (withdrawal_id,))
-    await conn.commit()
-    return True
+    raise GiftCardError("legacy_read_only", 409)
 
 
 async def finalize(conn, withdrawal_id):
-    import asyncio
-
-    from core.delivery.router import DeliveryDeferred, SettlementMismatch, verify_delivery
-
+    """Ни внешнего supplier check, ни скрытой комиссии, ни выдачи ambiguous legacy-кода."""
     row = await (
-        await conn.execute(
-            "SELECT id, code_id, amount_units, fee_units, status, idempotency_key FROM withdrawals WHERE id = %s FOR UPDATE",  # noqa: E501
-            (withdrawal_id,),
-        )
+        await conn.execute("SELECT id FROM withdrawals WHERE id = %s", (withdrawal_id,))
     ).fetchone()
     if row is None:
-        raise ValueError("withdrawal not found")  # noqa: B904
-    if row["status"] == "issued":
-        return {"status": "issued"}
-    if row["status"] not in ("approved", "pending"):
-        raise ValueError("not finalizable")  # noqa: B904
-    idem = row.get("idempotency_key") if isinstance(row, dict) else None
-    if not idem:
-        idem = f"wd:{withdrawal_id}"
-        await conn.execute(
-            "UPDATE withdrawals SET idempotency_key = %s WHERE id = %s", (idem, withdrawal_id)
-        )
-        await conn.commit()
-    try:
-        result = await asyncio.wait_for(verify_delivery(row["code_id"]), timeout=15)
-    except TimeoutError:
-        await conn.execute(
-            "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
-        )
-        await conn.commit()
-        return {"status": "manual_review"}
-    except (SettlementMismatch, DeliveryDeferred) as e:
-        if isinstance(e, SettlementMismatch):
-            await conn.execute(
-                "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
-            )
-            await conn.commit()
-            return {"status": "manual_review"}
-        await conn.execute(
-            "UPDATE withdrawals SET status = 'pending_supplier' WHERE id = %s", (withdrawal_id,)
-        )
-        await conn.commit()
-        return {"status": "pending_supplier"}
-    code = await (
-        await conn.execute("SELECT nominal_units FROM gift_codes WHERE id = %s", (row["code_id"],))
-    ).fetchone()
-    fee = int(row.get("fee_units", 0) or 0)
-    expected_nominal = int(row["amount_units"]) - fee
-    if code and int(code["nominal_units"]) != expected_nominal:
-        await conn.execute(
-            "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
-        )
-        await conn.commit()
-        return {"status": "manual_review"}
-    verified = getattr(result, "verified", None)
-    amount_match = getattr(result, "amount_match", None)
-    if verified is None and isinstance(result, dict):
-        verified = result.get("verified")
-        amount_match = result.get("amount_match")
-    if not (verified and amount_match):
-        await conn.execute(
-            "UPDATE withdrawals SET status = 'manual_review' WHERE id = %s", (withdrawal_id,)
-        )
-        await conn.commit()
-        return {"status": "manual_review"}
-    await conn.execute(
-        "UPDATE withdrawals SET status = 'issued', decided_at = now() WHERE id = %s",
-        (withdrawal_id,),
-    )
-    await conn.commit()
-    return {"status": "issued"}
+        raise GiftCardError("not_found", 404)
+    return {"status": "manual_review", "legacy": True, "read_only": True}

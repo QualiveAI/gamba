@@ -88,6 +88,7 @@ async def test_paused_case_rejects_new_session():
 
 
 def test_scheduler_registered():
-    from app.main import scheduler
+    from app.ops.scheduler import create_scheduler
 
+    scheduler = create_scheduler()
     assert any(getattr(job, "id", None) == "auto_pause" for job in scheduler.get_jobs())

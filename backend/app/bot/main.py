@@ -1,105 +1,125 @@
+"""Явный setup основного бота и единственный dev poller; импорт без side effects."""
+
 import asyncio
-import os
+import logging
 import sys
+from contextlib import suppress
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-from aiogram import Bot, Dispatcher
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-
+from app.bot.client import TelegramAPIError, TelegramClient, retry_delay
+from app.bot.inbox import save_update
+from app.bot.pool import get_bot, register_main, trusted_main
+from app.bot.security import BotSecurityError, main_bot_id
+from app.bot.setup import configure_bot
 from app.config import settings
 from app.db import close_pool, get_conn, init_pool
 
-bot = Bot(token=settings.bot_token)
-dp = Dispatcher()
-
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://localhost")
+logger = logging.getLogger(__name__)
 
 
-@dp.message(Command("start"))
-async def cmd_start(message):
-    # handle ref payload
-    text = message.text or ""
-    if "ref_" in text:
-        try:
-            referrer_id = int(text.split("ref_")[1].split()[0])
-            from app.referrals.service import handle_referral
-
-            async with get_conn() as conn:
-                await handle_referral(conn, message.from_user.id, referrer_id)
-        except Exception:
-            pass
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🎮 Открыть ROBLOXWINDROP", web_app=WebAppInfo(url=WEBAPP_URL)
-                )
-            ]
-        ]
+async def configure_main_bot(client):
+    if getattr(settings, "bot_mode", "disabled") not in {"polling", "webhook"}:
+        raise BotSecurityError("bot_disabled")
+    if settings.bot_mode == "polling" and settings.env not in {"dev", "test"}:
+        raise BotSecurityError("polling_dev_only")
+    me = await client.call(settings.bot_token, "getMe")
+    async with get_conn() as conn, conn.transaction():
+        bot = await register_main(conn, me)
+    await configure_bot(
+        client, bot=bot, token=settings.bot_token, webhook=settings.bot_mode == "webhook"
     )
-    await message.answer(
-        "🐒 Добро пожаловать в WINDROP!\n\n"
-        "Открывай кейсы, играй в Mines, Crash, Upgrade и Shell.\n"
-        "Депозит и вывод — прямо в мини-приложении.\n\n"
-        "Кнопка ниже откроет игру.",
-        reply_markup=kb,
-    )
+    return bot
 
 
-@dp.message(Command("menu"))
-async def cmd_menu(message):
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=WEBAPP_URL))],
-            [InlineKeyboardButton(
-                text="💰 Пополнить",
-                web_app=WebAppInfo(url=f"{WEBAPP_URL}#deposit"),
-            )],
-        ]
-    )
-    await message.answer("Меню WINDROP:", reply_markup=kb)
-
-
-@dp.message(Command("balance"))
-async def cmd_balance(message):
-    async with get_conn() as conn:
-        row = await (
-            await conn.execute(
-                "SELECT balance_units, balance_freebets FROM users WHERE telegram_id = %s",
-                (message.from_user.id,),
-            )
+async def poll_main(client, *, stop: asyncio.Event | None = None):
+    if (
+        settings.env not in {"dev", "test"}
+        or getattr(settings, "bot_mode", "disabled") != "polling"
+    ):
+        raise BotSecurityError("polling_dev_only")
+    stop = stop or asyncio.Event()
+    bot_id = main_bot_id()
+    # Session advisory lock держится весь poller. Второй process не получает тот же token.
+    async with get_conn() as lease_conn:
+        locked = await (
+            await lease_conn.execute("SELECT pg_try_advisory_lock(%s) AS locked", (bot_id,))
         ).fetchone()
-    bal = row["balance_units"] if row else 0
-    freebets = 0
-    if row:
-        freebets = row.get("balance_freebets", 0) or 0
-    await message.answer(f"💰 Баланс: {bal} юнитов\n🎁 Фрибеты: {freebets}")
-
-
-@dp.message(Command("withdraw"))
-async def cmd_withdraw(message):
-    url = f"{WEBAPP_URL}#withdraw"
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🏦 Вывести", web_app=WebAppInfo(url=url))]]
-    )
-    await message.answer("Вывод средств — в мини-приложении:", reply_markup=kb)
-
-
-@dp.message(Command("support"))
-async def cmd_support(message):
-    await message.answer("Поддержка: @windrop_support")
+        await lease_conn.commit()
+        if not locked or not locked["locked"]:
+            raise BotSecurityError("poller_already_running")
+        try:
+            info = await client.call(settings.bot_token, "getWebhookInfo")
+            if not isinstance(info, dict) or info.get("url"):
+                # Никогда автоматически deleteWebhook/drop_pending_updates для живого бота.
+                raise BotSecurityError("webhook_active_polling_forbidden")
+            await configure_main_bot(client)
+            attempt = 0
+            while not stop.is_set():
+                async with get_conn() as conn:
+                    bot = await get_bot(conn, bot_id)
+                if not trusted_main(bot):
+                    raise BotSecurityError("main_source_untrusted")
+                try:
+                    updates = await client.call(
+                        settings.bot_token,
+                        "getUpdates",
+                        offset=bot["poll_offset"],
+                        timeout=25,
+                        limit=20,
+                        allowed_updates=["message", "pre_checkout_query", "managed_bot"],
+                    )
+                    if not isinstance(updates, list):
+                        raise TelegramAPIError("updates_response_invalid", retryable=True)
+                    async with get_conn() as conn, conn.transaction():
+                        current = await get_bot(conn, bot_id, lock=True)
+                        if (
+                            not trusted_main(current)
+                            or current["credential_version"] != bot["credential_version"]
+                        ):
+                            raise BotSecurityError("polling_credentials_changed")
+                        offset = current["poll_offset"]
+                        for update in updates:
+                            await save_update(conn, bot=current, update=update)
+                            offset = max(offset, update["update_id"] + 1)
+                        await conn.execute(
+                            "UPDATE bot_registry SET poll_offset = %s WHERE bot_id = %s",
+                            (offset, bot_id),
+                        )
+                    # Следующий getUpdates ACK только после durable commit.
+                    attempt = 0
+                except TelegramAPIError as exc:
+                    attempt += 1
+                    if not exc.retryable or attempt >= 8:
+                        raise
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(
+                            stop.wait(), timeout=retry_delay(attempt, exc.retry_after)
+                        )
+        finally:
+            await lease_conn.execute("SELECT pg_advisory_unlock(%s)", (bot_id,))
+            await lease_conn.commit()
 
 
 async def main():
+    if getattr(settings, "bot_mode", "disabled") == "disabled":
+        return
     await init_pool()
     try:
-        await dp.start_polling(bot)
+        async with TelegramClient() as client:
+            if settings.bot_mode == "webhook":
+                await configure_main_bot(client)
+                return
+            await poll_main(client)
     finally:
         await close_pool()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        logger.error("telegram_main_stopped code=bot_startup_failed")
+        raise SystemExit(1) from None

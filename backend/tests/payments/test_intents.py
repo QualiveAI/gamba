@@ -1,62 +1,80 @@
+import asyncio
+import uuid
+
 import pytest
 
 from app.db import get_conn
+from core.contracts.payment import PaymentError
 from core.payments.intents import attach_provider_ref, create_intent, get_intent
-
-
-async def _user_id():
-    async with get_conn() as conn:
-        await conn.execute(
-            "INSERT INTO users (telegram_id, balance_units, region, created_at) VALUES (900101, 0, 'US', now()) ON CONFLICT (telegram_id) DO NOTHING"
-        )
-        await conn.commit()
-        row = await (
-            await conn.execute("SELECT id FROM users WHERE telegram_id = 900101")
-        ).fetchone()
-    return row["id"]
+from core.payments.quotes import create_quote
 
 
 @pytest.mark.asyncio
-async def test_create_intent_persists():
-    uid = await _user_id()
-    intent = await create_intent(uid, "default", "mock", 100, "units", "key-1")
+async def test_create_intent_persists_canonical_id(payment_factory):
+    user, quote, intent = await payment_factory()
     got = await get_intent(intent.id)
-    assert got is not None
-    assert got.id == intent.id
-    assert got.user_id == uid
-    assert got.amount_minor == 100
-    assert got.status == "pending"
-    assert got.id != "nonexistent"
+    assert got.id == intent.id == got.client_payload["intent_id"]
+    assert got.user_id == user["id"]
+    assert got.coins == quote.coins == 100
+    assert got.provider_amount_atomic == quote.gross_brl_minor == 972
+    assert got.currency == "BRL"
+    assert got.public()["provider_amount_atomic"] == "972"
 
 
 @pytest.mark.asyncio
-async def test_idempotency_key_returns_existing():
-    uid = await _user_id()
-    first = await create_intent(uid, "default", "mock", 100, "units", "key-2")
-    second = await create_intent(uid, "default", "mock", 100, "units", "key-2")
-    assert first.id == second.id
-    async with get_conn() as conn:
-        row = await (
-            await conn.execute(
-                "SELECT COUNT(*) AS c FROM payment_intents WHERE idempotency_key = 'key-2'"
+async def test_scoped_idempotency_and_conflict(payment_factory):
+    key = uuid.uuid4().hex
+    user, quote, first = await payment_factory(key=key)
+    async with get_conn() as conn, conn.transaction():
+        second = await create_intent(conn=conn, user=user, quote_id=quote.id, idempotency_key=key)
+        assert second.id == first.id
+        different_quote = await create_quote(conn, user=user, coins=101, method="card")
+        with pytest.raises(PaymentError, match="chave"):
+            await create_intent(
+                conn=conn, user=user, quote_id=different_quote.id, idempotency_key=key
             )
-        ).fetchone()
-        assert row["c"] == 1
-        assert row["c"] != 2
+    other, _, third = await payment_factory(key=key)
+    assert other["id"] != user["id"] and third.id != first.id
 
 
 @pytest.mark.asyncio
-async def test_positive_amount_required():
-    uid = await _user_id()
-    with pytest.raises(ValueError):
-        await create_intent(uid, "default", "mock", 0, "units", "key-3")
+async def test_concurrent_key_has_one_intent(payment_factory):
+    user, _, _ = await payment_factory()
+    async with get_conn() as conn:
+        quote = await create_quote(conn, user=user, coins=120, method="card")
+    key = uuid.uuid4().hex
+
+    async def create():
+        async with get_conn() as conn, conn.transaction():
+            return await create_intent(conn=conn, user=user, quote_id=quote.id, idempotency_key=key)
+
+    first, second = await asyncio.gather(create(), create())
+    assert first.id == second.id
 
 
 @pytest.mark.asyncio
-async def test_attach_provider_ref():
-    uid = await _user_id()
-    intent = await create_intent(uid, "default", "mock", 100, "units", "key-4")
-    await attach_provider_ref(intent.id, "prov-1")
-    got = await get_intent(intent.id)
-    assert got.provider_ref == "prov-1"
-    assert got.provider_ref != "other"
+async def test_legacy_amount_rejected_before_db():
+    with pytest.raises(PaymentError) as exc:
+        await create_intent(1, "default", "mock", 100, "units", "legacy-key")
+    assert exc.value.code == "legacy_amount_ambiguous"
+
+
+@pytest.mark.asyncio
+async def test_provider_ref_write_once(payment_factory):
+    _, _, intent = await payment_factory()
+    await attach_provider_ref(intent.id, "provider:" + intent.id)
+    await attach_provider_ref(intent.id, "provider:" + intent.id)
+    with pytest.raises(PaymentError) as exc:
+        await attach_provider_ref(intent.id, "other:" + intent.id)
+    assert exc.value.code == "provider_reference_conflict"
+
+
+@pytest.mark.asyncio
+async def test_quote_immutable_db(payment_factory):
+    _, quote, _ = await payment_factory()
+    async with get_conn() as conn:
+        with pytest.raises(Exception, match="payment_quote_immutable"):
+            async with conn.transaction():
+                await conn.execute(
+                    "UPDATE payment_quotes SET coins=coins+1 WHERE id=%s", (quote.id,)
+                )

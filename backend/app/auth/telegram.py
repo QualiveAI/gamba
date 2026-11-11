@@ -1,16 +1,19 @@
 import hashlib
 import hmac
 import json
+import re
 import time
 import urllib.parse
 from dataclasses import dataclass
+
+from app.bot.security import positive_id
 
 
 class AuthError(Exception):
     pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class TelegramUser:
     id: int
     first_name: str = ""
@@ -19,40 +22,45 @@ class TelegramUser:
     language_code: str = ""
 
 
-def validate_init_data(init_data: str, bot_token: str, ttl: int = 300) -> TelegramUser:
-    if not init_data:
-        raise AuthError("empty init_data")  # noqa: B904
-    parsed = urllib.parse.parse_qsl(init_data, keep_blank_values=True)
-    data = {k: v for k, v in parsed}
-    received_hash = data.pop("hash", None)
-    if not received_hash:
-        raise AuthError("missing hash")  # noqa: B904
-    auth_date_raw = data.get("auth_date")
-    if not auth_date_raw:
-        raise AuthError("missing auth_date")  # noqa: B904
+def validate_init_data(
+    init_data: str, bot_token: str, ttl: int = 300, *, expected_owner_id: int | None = None
+) -> TelegramUser:
+    if not init_data or not bot_token or len(init_data.encode("utf-8")) > 16384:
+        raise AuthError("invalid_init_data")
     try:
-        auth_date = int(auth_date_raw)
+        parsed = urllib.parse.parse_qsl(
+            init_data, keep_blank_values=True, strict_parsing=True, max_num_fields=32
+        )
     except ValueError:
-        raise AuthError("bad auth_date")  # noqa: B904
-    if abs(time.time() - auth_date) > ttl:
-        raise AuthError("expired auth_date")  # noqa: B904
-    items = sorted(data.items())
-    data_check_string = "\n".join(f"{k}={v}" for k, v in items)
-    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-    calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(calc_hash, received_hash):
-        raise AuthError("bad hash")  # noqa: B904
-    user_raw = data.get("user")
-    if not user_raw:
-        raise AuthError("missing user")  # noqa: B904
+        raise AuthError("invalid_init_data") from None
+    data = dict(parsed)
+    if len(data) != len(parsed):
+        raise AuthError("duplicate_init_data_field")
+    received_hash = data.pop("hash", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", received_hash):
+        raise AuthError("invalid_hash")
     try:
-        user_obj = json.loads(user_raw)
-    except json.JSONDecodeError:
-        raise AuthError("bad user json")  # noqa: B904
-    return TelegramUser(
-        id=int(user_obj["id"]),
-        first_name=user_obj.get("first_name", "") or "",
-        last_name=user_obj.get("last_name", "") or "",
-        username=user_obj.get("username", "") or "",
-        language_code=user_obj.get("language_code", "") or "",
-    )
+        auth_date = int(data.get("auth_date", ""))
+    except ValueError:
+        raise AuthError("invalid_auth_date") from None
+    if auth_date > time.time() + 30 or time.time() - auth_date > ttl:
+        raise AuthError("expired_auth_date")
+    check = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    calculated = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(calculated, received_hash):
+        raise AuthError("invalid_hash")
+    try:
+        user = json.loads(data.get("user", ""))
+    except (ValueError, TypeError):
+        raise AuthError("invalid_user") from None
+    if not isinstance(user, dict) or not positive_id(user.get("id")) or user.get("is_bot") is True:
+        raise AuthError("invalid_user")
+    # Владелец managed token способен подписать initData любого Telegram ID.
+    # Подпись поэтому НЕ даёт права входить от имени кого-либо кроме registry.owner.
+    if expected_owner_id is not None and user["id"] != expected_owner_id:
+        raise AuthError("managed_owner_mismatch")
+    text_fields = ("first_name", "last_name", "username", "language_code")
+    if any(not isinstance(user.get(key, ""), str) for key in text_fields):
+        raise AuthError("invalid_user")
+    return TelegramUser(id=user["id"], **{key: user.get(key, "")[:128] for key in text_fields})

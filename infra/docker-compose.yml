@@ -1,3 +1,25 @@
+x-backend: &backend-base
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile.backend
+  env_file:
+    - path: ${WINDROP_ENV_FILE:-.env}
+      required: false
+  init: true
+  stop_grace_period: 30s
+
+x-local-environment: &local-environment
+  ENV: dev
+  DATABASE_URL: postgresql://caseplatform:caseplatform@db:5432/caseplatform
+  REDIS_URL: redis://redis:6379/0
+  WEBAPP_URL: ${WEBAPP_URL:-http://localhost:8090/app/}
+  ALLOW_GUEST_AUTH: "false"
+  PAYMENTS_MODE: disabled
+  BOT_MODE: disabled
+  MANAGED_BOTS_ENABLED: "false"
+  GIFTCARD_MODE: disabled
+  MEDIA_STORAGE_MODE: local
+
 services:
   db:
     image: postgres:16
@@ -6,110 +28,115 @@ services:
       POSTGRES_PASSWORD: caseplatform
       POSTGRES_DB: caseplatform
     volumes:
-    - pgdata:/var/lib/postgresql/data
-    - ../backend/migrations:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test:
-      - CMD-SHELL
-      - pg_isready -U caseplatform -d caseplatform
+      test: [CMD, pg_isready, -U, caseplatform, -d, caseplatform]
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
-    - 5432:5432
+      - "5432:5432"
+
   redis:
     image: redis:7-alpine
     healthcheck:
-      test:
-      - CMD
-      - redis-cli
-      - ping
+      test: [CMD, redis-cli, ping]
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
-    - 6379:6379
+      - "6379:6379"
+
   backend:
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.backend
-      args:
-        HTTP_PROXY: ''
-        HTTPS_PROXY: ''
-        http_proxy: ''
-        https_proxy: ''
-    env_file:
-    - .env
-    environment:
-      DATABASE_URL: postgresql://caseplatform:caseplatform@db:5432/caseplatform
-      REDIS_URL: redis://redis:6379/0
-      WEBAPP_URL: ${WEBAPP_URL:-http://localhost:8090/app/}
+    <<: *backend-base
+    environment: *local-environment
+    volumes:
+      - media:/app/media
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test:
-      - CMD-SHELL
-      - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      test: [CMD, python, -m, app.ops.probe, live]
       interval: 10s
-      timeout: 5s
+      timeout: 4s
+      start_period: 15s
       retries: 5
     ports:
-    # 8000 на хосте занят другим сервисом — наружу отдаём API на 8001
-    - 8001:8000
+      # Порты существующего локального проекта сохранены.
+      - "8001:8000"
+
+  # Миграции никогда не запускаются простым up, в том числе на старом pgdata.
+  migrate:
+    <<: *backend-base
+    profiles: [ops]
+    environment: *local-environment
+    command: [python, tools/migrate.py]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  scheduler:
+    <<: *backend-base
+    profiles: [scheduler]
+    environment: *local-environment
+    command: [python, -m, app.ops.scheduler]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Только явный профиль dev-polling разрешает локальный Telegram polling.
   bot:
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.backend
-      args:
-        HTTP_PROXY: ''
-        HTTPS_PROXY: ''
-        http_proxy: ''
-        https_proxy: ''
-    env_file:
-    - .env
+    <<: *backend-base
+    profiles: [dev-polling]
     environment:
-      DATABASE_URL: postgresql://caseplatform:caseplatform@db:5432/caseplatform
-      REDIS_URL: redis://redis:6379/0
-      WEBAPP_URL: ${WEBAPP_URL:-http://localhost:8090/app/}
-    command:
-    - python
-    - -m
-    - app.bot.main
+      <<: *local-environment
+      BOT_MODE: polling
+    command: [python, -m, app.bot.main]
     depends_on:
-      backend:
+      db:
         condition: service_healthy
-  healthcheck-bot:
-    build:
-      context: ..
-      dockerfile: infra/Dockerfile.backend
-      args:
-        HTTP_PROXY: ''
-        HTTPS_PROXY: ''
-        http_proxy: ''
-        https_proxy: ''
-    env_file:
-    - .env
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *backend-base
+    profiles: [dev-polling]
     environment:
-      DATABASE_URL: postgresql://caseplatform:caseplatform@db:5432/caseplatform
-      REDIS_URL: redis://redis:6379/0
-    command:
-    - python
-    - -m
-    - app.bot.healthcheck
+      <<: *local-environment
+      BOT_MODE: polling
+    command: [python, -m, app.bot.worker]
     depends_on:
-      backend:
+      db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  payments-worker:
+    <<: *backend-base
+    profiles: [payments-worker]
+    environment: *local-environment
+    command: [python, -m, core.payments.worker, --interval, "5"]
+    restart: on-failure
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   caddy:
     image: caddy:2-alpine
     ports:
-    - 8090:80
+      - "8090:80"
     volumes:
-    - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    - ../frontend:/srv/app:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend:/srv/app:ro
     depends_on:
-    - backend
+      - backend
+
 volumes:
-  pgdata: null
+  # Не переименовывать: существующий infra_pgdata остаётся нетронутым.
+  pgdata:
+  media:

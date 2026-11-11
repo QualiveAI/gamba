@@ -1,0 +1,165 @@
+name: windrop-prod
+
+x-app: &app-base
+  image: ${BACKEND_IMAGE:-windrop-backend:local}
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile.backend
+  env_file:
+    - ${PRODUCTION_ENV_FILE:?Set PRODUCTION_ENV_FILE to an explicit private file}
+  environment: &production-environment
+    ENV: prod
+    # Один внешний writer; никакого локального PostgreSQL и автоматического promotion.
+    DATABASE_URL: ${DATABASE_URL:?Set the external PostgreSQL writer DSN}
+    # Общий env_file может содержать DDL DSN, но runtime-процессы его не получают.
+    MIGRATION_DATABASE_URL: ""
+    REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    WEBAPP_URL: https://${PUBLIC_DOMAIN:?Set a stable public domain}/app/
+    PUBLIC_BASE_URL: https://${PUBLIC_DOMAIN:?Set a stable public domain}
+    ALLOW_GUEST_AUTH: "false"
+    PAYMENTS_MODE: ${PAYMENTS_MODE:-disabled}
+    BOT_MODE: ${BOT_MODE:-disabled}
+    MANAGED_BOTS_ENABLED: ${MANAGED_BOTS_ENABLED:-false}
+    GIFTCARD_MODE: ${GIFTCARD_MODE:-disabled}
+    MEDIA_STORAGE_MODE: local
+    EXPECTED_SCHEMA_VERSION: ${EXPECTED_SCHEMA_VERSION:-0018_giftcard_redemption.sql}
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 75s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-api: &api-base
+  <<: *app-base
+  command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --workers, "2", --no-access-log]
+  expose: ["8000"]
+  volumes:
+    - media:/app/media
+  depends_on:
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: [CMD, python, -m, app.ops.probe, live]
+    interval: 10s
+    timeout: 4s
+    start_period: 20s
+    retries: 3
+
+services:
+  api:
+    <<: *api-base
+
+  # Standby включается только явным override, не появляется автоматически.
+  api-standby:
+    <<: *api-base
+    profiles: [standby]
+
+  worker:
+    <<: *app-base
+    command: [python, -m, app.bot.worker]
+    restart: on-failure
+    environment:
+      <<: *production-environment
+      PAYMENTO_API_KEY: ""
+      PAYMENTO_SECRET_KEY: ""
+      GIFTCARD_FERNET_KEY: ""
+      GIFTCARD_FINGERPRINT_KEY: ""
+      GIFTCARD_REDEMPTION_ENABLED: "false"
+      GIFTCARD_MODE: disabled
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  payments-worker:
+    <<: *app-base
+    command: [python, -m, core.payments.worker, --interval, "5"]
+    environment:
+      <<: *production-environment
+      BOT_MODE: disabled
+      MANAGED_BOTS_ENABLED: "false"
+      FERNET_KEY: ""
+      TELEGRAM_WEBHOOK_SECRET: ""
+      GIFTCARD_MODE: disabled
+      GIFTCARD_REDEMPTION_ENABLED: "false"
+      GIFTCARD_FERNET_KEY: ""
+      GIFTCARD_FINGERPRINT_KEY: ""
+    # В disabled CLI завершает работу с 0; не создавать бесконечный restart loop.
+    restart: on-failure
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    <<: *app-base
+    command: [python, -m, app.ops.scheduler]
+    environment: &offline-environment
+      <<: *production-environment
+      BOT_MODE: disabled
+      PAYMENTS_MODE: disabled
+      MANAGED_BOTS_ENABLED: "false"
+      GIFTCARD_MODE: disabled
+      GIFTCARD_REDEMPTION_ENABLED: "false"
+      BOT_TOKEN: ""
+      FERNET_KEY: ""
+      TELEGRAM_WEBHOOK_SECRET: ""
+      PAYMENTO_API_KEY: ""
+      PAYMENTO_SECRET_KEY: ""
+      GIFTCARD_FERNET_KEY: ""
+      GIFTCARD_FINGERPRINT_KEY: ""
+
+  migrate:
+    <<: *app-base
+    profiles: [ops]
+    command: [python, tools/migrate.py]
+    restart: "no"
+    environment:
+      <<: *offline-environment
+      # Повышенные DDL-права отделены от runtime роли и доступны только one-shot job.
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:-${DATABASE_URL:?Set the external writer DSN}}
+
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, "yes", --appendfsync, everysec]
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # Redis не публикуется на хост. Внешний сервис — через REDIS_URL и TLS.
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set a stable public domain}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - ../frontend:/srv/app:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  # api и api-standby на ОДНОМ Docker host; межхостовое media этим не обеспечивается.
+  media:
+  redisdata:
+  caddy_data:
+  caddy_config:

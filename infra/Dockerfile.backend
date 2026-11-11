@@ -1,10 +1,10 @@
 FROM python:3.12-slim
 
-ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="*"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
-
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 COPY backend/pyproject.toml backend/ruff.toml ./
 COPY backend/app ./app
@@ -13,12 +13,15 @@ COPY backend/plugins ./plugins
 COPY backend/configs ./configs
 COPY backend/locales ./locales
 COPY backend/migrations ./migrations
+COPY backend/tools ./tools
 
-RUN pip install --no-cache-dir -e . --no-build-isolation
+RUN pip install --no-cache-dir . \
+    && useradd -m -u 1000 appuser \
+    && mkdir -p /app/media \
+    && chown -R appuser:appuser /app
 
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
-
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# API workers не запускают scheduler, polling или очередь Telegram.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]

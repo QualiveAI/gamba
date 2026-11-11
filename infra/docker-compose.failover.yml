@@ -1,0 +1,9 @@
+# Только вместе с docker-compose.prod.yml и явным --profile standby.
+# Общие БД writer, Redis, JWT/ключи и media; это НЕ DB failover.
+services:
+  caddy:
+    volumes:
+      - ./Caddyfile.failover:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api-standby:
+        condition: service_started

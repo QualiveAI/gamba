@@ -1,68 +1,100 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from dataclasses import asdict
 
-from app.api.deps import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
+
+from app.api.deps import get_current_user, require_admin
 from app.db import get_conn
-from app.payments import stars, yoomoney_sbp
+from app.payments import gifts, stars
+from core.contracts.payment import PaymentError
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 
 class StarsInvoiceRequest(BaseModel):
-    title: str
-    description: str
-    payload: str
-    amount_stars: int
+    model_config = ConfigDict(extra="forbid")
+    intent_id: str = Field(pattern=r"^[0-9a-f]{32}$")
 
 
-class YooMoneyCreateRequest(BaseModel):
-    amount_rub: float
+class GiftReceiptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    gift_id: str = Field(min_length=1, max_length=160)
+    custody_reference: str = Field(min_length=1, max_length=256)
 
 
-class ManualClaimRequest(BaseModel):
-    receipt_url: str
+class GiftReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receipt_event_id: StrictInt = Field(gt=0)
+    valued_brl_minor: StrictInt = Field(gt=0)
+
+
+def _payment_error(exc: PaymentError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}
+    )
 
 
 @router.post("/stars/invoice")
-async def stars_invoice(body: StarsInvoiceRequest, user=Depends(get_current_user)):  # noqa: E501, B008  # noqa: B008  # noqa: B008
-    url = await stars.create_invoice_link(
-        body.title, body.description, body.payload, body.amount_stars
-    )
-    return {"invoice_link": url}
+async def stars_invoice(body: StarsInvoiceRequest, user=Depends(get_current_user)):  # noqa: B008
+    try:
+        async with get_conn() as conn, conn.transaction():
+            return await stars.create_invoice_for_intent(conn, user=user, intent_id=body.intent_id)
+    except PaymentError as exc:
+        raise _payment_error(exc) from exc
 
 
-@router.post("/yoomoney/create")
-async def yoomoney_create(body: YooMoneyCreateRequest, user=Depends(get_current_user)):  # noqa: E501, B008  # noqa: B008  # noqa: B008
-    async with get_conn() as conn:
-        return await yoomoney_sbp.create_payment(conn, user["id"], body.amount_rub)
-
-
-@router.get("/{payment_id}/status")
-async def payment_status(payment_id: int, user=Depends(get_current_user)):  # noqa: E501, B008  # noqa: B008  # noqa: B008
-    async with get_conn() as conn:
-        row = await (
-            await conn.execute(
-                "SELECT id, status, amount_units, metadata FROM payment_polling WHERE id = %s",
-                (payment_id,),
+@router.post("/gifts/{intent_id}/receipt")
+async def gift_receipt(intent_id: str, body: GiftReceiptRequest, owner=Depends(require_admin)):  # noqa: B008
+    try:
+        async with get_conn() as conn, conn.transaction():
+            event_id = await gifts.record_manual_gift_receipt(
+                conn,
+                intent_id=intent_id,
+                owner=owner,
+                gift_id=body.gift_id,
+                custody_reference=body.custody_reference,
             )
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="not found")  # noqa: B904
-    return dict(row)
+        return {"receipt_event_id": event_id, "status": "pending_review"}
+    except PaymentError as exc:
+        raise _payment_error(exc) from exc
 
 
+@router.post("/gifts/{intent_id}/review")
+async def gift_review(intent_id: str, body: GiftReviewRequest, owner=Depends(require_admin)):  # noqa: B008
+    try:
+        async with get_conn() as conn, conn.transaction():
+            result = await gifts.review_gift(
+                conn,
+                intent_id=intent_id,
+                receipt_event_id=body.receipt_event_id,
+                valued_brl_minor=body.valued_brl_minor,
+                owner=owner,
+            )
+        return asdict(result)
+    except PaymentError as exc:
+        raise _payment_error(exc) from exc
+
+
+@router.post("/stars/{intent_id}/refund-request")
+async def stars_refund_request(intent_id: str, owner=Depends(require_admin)):  # noqa: B008
+    try:
+        async with get_conn() as conn, conn.transaction():
+            return await stars.request_stars_refund(conn, intent_id=intent_id, owner=owner)
+    except PaymentError as exc:
+        raise _payment_error(exc) from exc
+
+
+# Обходные legacy потоки отключены. Старые payload amount_rub/receipt_url не
+# превращаются в coins и не попадают в yoomoney_sbp с его собственным settlement.
+@router.post("/yoomoney/create")
 @router.post("/yoomoney/webhook")
-async def yoomoney_webhook(request: Request):
-    body = await request.body()
-    sig = request.headers.get("X-YooMoney-Signature", "")
-    if not yoomoney_sbp.verify_webhook(body, sig):
-        raise HTTPException(status_code=400, detail="bad signature")  # noqa: B904
-    payload = await request.json()
-    async with get_conn() as conn:
-        return await yoomoney_sbp.handle_webhook(conn, payload)
-
-
+@router.get("/{payment_id}/status")
 @router.post("/{payment_id}/manual-claim")
-async def manual_claim(payment_id: int, body: ManualClaimRequest, user=Depends(get_current_user)):  # noqa: E501, B008  # noqa: B008  # noqa: B008
-    async with get_conn() as conn:
-        return await yoomoney_sbp.manual_claim(conn, payment_id, body.receipt_url)
+async def legacy_payment_disabled(request: Request):
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "legacy_payment_disabled",
+            "message": "Use o novo fluxo de depósitos com cotação.",
+        },
+    )

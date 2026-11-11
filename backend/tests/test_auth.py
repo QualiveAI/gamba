@@ -68,3 +68,26 @@ def test_pkce_challenge():
         base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     )
     assert challenge == expected
+
+
+def test_duplicate_init_data_fields_are_rejected():
+    with pytest.raises(AuthError):
+        validate_init_data(make_init_data() + "&user=%7B%22id%22%3A99%7D", BOT_TOKEN)
+
+
+def test_managed_signature_cannot_authenticate_other_identity():
+    with pytest.raises(AuthError):
+        validate_init_data(make_init_data(), BOT_TOKEN, expected_owner_id=999)
+
+
+def test_future_auth_date_is_rejected():
+    with pytest.raises(AuthError):
+        validate_init_data(make_init_data(auth_date=int(time.time()) + 120), BOT_TOKEN)
+
+
+@pytest.mark.parametrize("token", ["x.y.z", "..", "a.b", "a.b.c.d", "a.b.!"])
+def test_malformed_jwt_is_a_normal_auth_error(token):
+    from app.auth.jwt import JWTError, verify_claims
+
+    with pytest.raises(JWTError):
+        verify_claims(token)

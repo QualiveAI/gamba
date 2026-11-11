@@ -126,7 +126,8 @@ async def reveal(conn, session_id, cell, user):
 async def cashout(conn, session_id, user):
     row = await (
         await conn.execute(
-            "SELECT id, bet_units, mine_count, grid_size, revealed, status FROM mines_sessions WHERE id = %s",
+            "SELECT id, bet_units, mine_count, grid_size, revealed, status "
+            "FROM mines_sessions WHERE id = %s",
             (session_id,),
         )
     ).fetchone()
@@ -137,9 +138,7 @@ async def cashout(conn, session_id, user):
     if not revealed:
         raise ValueError("nothing revealed")  # noqa: B904
     payout = int(bet * mines_mult(int(row["mine_count"]), len(revealed), int(row["grid_size"])))
-    await post_entry(
-        conn, user["id"], "units", payout, "mines_cashout", f"mines:{session_id}:cash"
-    )
+    await post_entry(conn, user["id"], "units", payout, "mines_cashout", f"mines:{session_id}:cash")
     await conn.execute(
         "UPDATE mines_sessions SET status = 'cashed_out', payout_units = %s, ended_at = now() WHERE id = %s",  # noqa: E501
         (payout, session_id),

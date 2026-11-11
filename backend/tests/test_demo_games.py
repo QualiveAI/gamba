@@ -11,7 +11,14 @@ TG = 999099
 
 
 async def _mk_user(conn):
-    for table in ("events", "user_items", "case_openings", "shell_sessions", "crash_sessions", "mines_sessions"):  # noqa: E501
+    for table in (
+        "events",
+        "user_items",
+        "case_openings",
+        "shell_sessions",
+        "crash_sessions",
+        "mines_sessions",
+    ):  # noqa: E501
         await conn.execute(
             f"DELETE FROM {table} WHERE user_id IN (SELECT id FROM users WHERE telegram_id = %s)",  # noqa: E501
             (TG,),
@@ -105,7 +112,8 @@ async def test_mines_stake_and_ladder_cashout():
         assert await _ledger_sum(conn, u["id"]) == 10000 - 100  # ставка списывается
         # фиксируем мины подальше от клетки 0
         await conn.execute(
-            "UPDATE mines_sessions SET mines = %s WHERE id = %s", (json.dumps([22, 23, 24]), s["session_id"])  # noqa: E501
+            "UPDATE mines_sessions SET mines = %s WHERE id = %s",
+            (json.dumps([22, 23, 24]), s["session_id"]),  # noqa: E501
         )
         await conn.commit()
         r = await reveal(conn, s["session_id"], 0, u)

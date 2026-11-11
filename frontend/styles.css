@@ -5,11 +5,11 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}button
 :focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 img{display:block;max-width:100%}img.broken{opacity:0}
 .top{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:#121016e8;backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:8px;font-weight:900;letter-spacing:.02em;font-size:18px;color:var(--accent)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:900;letter-spacing:.02em;font-size:18px;color:var(--accent);min-width:0}
+#brand-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brand .logo-img,.top .bal{flex-shrink:0}
 .logo{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:16px}
 .bal{display:flex;gap:6px}.chip{display:flex;align-items:center;gap:5px;padding:6px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-weight:700;font-size:13px;white-space:nowrap}
 .coin{display:inline-block;width:14px;height:14px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff6c9,var(--gold) 45%,#b8811c);box-shadow:inset 0 0 0 1.5px #9a6a12;vertical-align:-2px;margin-right:4px;flex:none}.coin.copper{background:radial-gradient(circle at 35% 30%,#ffe0c8,var(--copper) 45%,#8c4a25);box-shadow:inset 0 0 0 1.5px #7a3d1c}
-.demo{margin:10px 16px 0;padding:7px 12px;border-radius:10px;background:#2a1d14;border:1px solid #5a3a20;color:#ffd7a8;font-size:12.5px;text-align:center}
 main{max-width:980px;margin:0 auto;padding:16px}
 .title{font-size:26px;font-weight:900;letter-spacing:-.01em;margin:6px 0 12px}.sub{color:var(--mute);margin:-4px 0 16px;max-width:60ch}
 .sec{font-size:15px;font-weight:800;margin:22px 0 10px;color:#ddd3e2}
@@ -204,7 +204,13 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .ph::after{content:"F381\FE0E"}
 .case-img .ph{width:76%;height:76%}
 
-/* поля ввода депозита/вывода */
+/* поля ввода депозита/обмена и сообщения форм */
+.payment-methods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.payment-option{display:grid;gap:5px;align-content:start;min-width:0}.payment-option .chip{justify-content:center;white-space:normal;min-height:38px}.payment-option .chip.on{border-color:var(--accent)}
+.payment-option small,.form-note{color:var(--mute);font-size:12.5px;overflow-wrap:anywhere}.form-error{padding:10px 12px;border-radius:12px;border:1px solid #ff5d6c66;background:#3a1f24;color:#ffd9df;font-size:13px;overflow-wrap:anywhere}
+.commerce-form{scroll-margin-top:84px}.commerce-form h3{font-size:14px}.commerce-form a{text-decoration:none}.commerce-form .form-note{text-align:left}
+.commerce-preview{display:grid;gap:8px;padding:12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);overflow-wrap:anywhere}
+.form-summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px 12px;font-size:13px}.form-summary dt{color:var(--mute)}.form-summary dd{font-weight:700;text-align:right;overflow-wrap:anywhere}
 .controls{display:flex;gap:8px;flex-wrap:wrap}
 .controls label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:var(--mute);flex:1 1 40%;min-width:0}
 .controls input,.controls select{height:46px;padding:0 12px;border-radius:12px;background:var(--panel2);border:1px solid var(--line);color:var(--text);font:inherit;font-size:14px;font-weight:700;width:100%}

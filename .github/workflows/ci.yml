@@ -1,15 +1,127 @@
 name: CI
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres_test:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test_admin
+          POSTGRES_PASSWORD: ci-bootstrap-only
+          POSTGRES_DB: postgres
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_admin -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis_test:
+        image: redis:7-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      WINDROP_TESTING: "1"
+      ENV: test
+      TEST_DATABASE_URL: postgresql://caseplatform_test:ci-test-only@127.0.0.1:55432/caseplatform_test
+      TEST_REDIS_URL: redis://127.0.0.1:56379/15
+      BOT_MODE: disabled
+      PAYMENTS_MODE: disabled
+      MANAGED_BOTS_ENABLED: "false"
+      ALLOW_GUEST_AUTH: "false"
+      GIFTCARD_MODE: disabled
+      GIFTCARD_REDEMPTION_ENABLED: "false"
+      EXPECTED_SCHEMA_VERSION: 0018_giftcard_redemption.sql
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: cd backend && pip install -e .[dev]
-      - run: cd backend && ruff check .
-      - run: cd backend && ruff format --check .
-      - run: cd backend && python -m pytest tests/ -q
-      - run: cd backend && docker compose -f ../infra/docker-compose.yml config -q
+      - name: Установить зависимости
+        working-directory: backend
+        run: python -m pip install -e '.[dev]'
+      - name: Создать ограниченную тестовую роль
+        env:
+          PGPASSWORD: ci-bootstrap-only
+        run: >-
+          psql --host=127.0.0.1 --port=55432 --username=test_admin
+          --dbname=postgres --no-psqlrc --set=ON_ERROR_STOP=1
+          --file=infra/ci/bootstrap-test.sql
+      - name: Проверить линтер
+        working-directory: backend
+        run: ruff check .
+      - name: Проверить формат
+        working-directory: backend
+        run: ruff format --check .
+      - name: Применить миграции только к тестовой БД
+        working-directory: backend
+        run: |
+          test -n "$TEST_DATABASE_URL"
+          test -n "$TEST_REDIS_URL"
+          DATABASE_URL="$TEST_DATABASE_URL" REDIS_URL="$TEST_REDIS_URL" python tools/migrate.py
+      - name: Запустить тесты с безопасным guard
+        working-directory: backend
+        run: |
+          test -n "$TEST_DATABASE_URL"
+          test -n "$TEST_REDIS_URL"
+          DATABASE_URL="$TEST_DATABASE_URL" REDIS_URL="$TEST_REDIS_URL" python -m pytest tests/ -q
+      - name: Проверить Compose без запуска и чтения приватного env
+        env:
+          WINDROP_ENV_FILE: /dev/null
+          PRODUCTION_ENV_FILE: /dev/null
+          DATABASE_URL: postgresql://caseplatform_test:ci-test-only@postgres_test:5432/caseplatform_test
+          PUBLIC_DOMAIN: preview.example.invalid
+        run: |
+          docker compose --env-file /dev/null -f infra/docker-compose.yml config --quiet
+          docker compose --env-file /dev/null -f infra/docker-compose.prod.yml config --quiet
+          docker compose --env-file /dev/null -f infra/docker-compose.prod.yml -f infra/docker-compose.failover.yml --profile standby config --quiet
+      - name: Проверить синтаксис backup и restore
+        run: |
+          bash -n infra/backup.sh
+          bash -n infra/restore-test.sh
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      CI: "true"
+      E2E_PORT: "8123"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Установить зафиксированные тестовые зависимости
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Проверить синтаксис интерфейса и лендинга
+        run: |
+          node --check js/api-client.js
+          node --check js/commerce.js
+          node --check js/app.js
+          node --check ../landing/config.js
+          node --check ../landing/link-builder.js
+          node --check ../landing/app.js
+      - name: Проверить клиентские контракты и безопасные ссылки
+        run: |
+          node --test tests/unit/*.test.cjs
+          node --test ../landing/tests/*.test.cjs
+      - name: Подготовить Chromium
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Проверить интерфейс с локальными моками без Telegram и PSP
+        run: npx --no-install playwright test --reporter=line

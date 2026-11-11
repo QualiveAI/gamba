@@ -1,38 +1,25 @@
-import asyncio
-import sys
+import pytest
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-from app.db import close_pool, get_conn, init_pool
+from app.db import get_conn
+from core.engine.ledger.ledger import CrossCurrencyForbidden, post_entry
 
 
-async def main():
-    await init_pool()
-    try:
-        async with get_conn() as conn:
-            # create user
-            await conn.execute("DELETE FROM users WHERE telegram_id = %s", (999020,))
-            cur = await conn.execute(
-                "INSERT INTO users (telegram_id, balance_units, balance_freebets) VALUES (%s, %s, %s) RETURNING id",  # noqa: E501
-                (999020, 1000, 500),
+@pytest.mark.asyncio
+async def test_no_cross_currency_credit():
+    async with get_conn() as conn, conn.transaction():
+        cur = await conn.execute(
+            "INSERT INTO users (telegram_id) VALUES (%s) RETURNING id", (8899020,)
+        )
+        user_id = (await cur.fetchone())["id"]
+        await post_entry(conn, user_id, "units", 1000, "test_setup", "gold_setup")
+        await post_entry(conn, user_id, "freebets", 500, "test_setup", "copper_setup")
+        with pytest.raises(CrossCurrencyForbidden):
+            await post_entry(conn, user_id, "units", 100, "item_sold", "forbidden", "cases_freebet")
+        await post_entry(conn, user_id, "freebets", -100, "case_open", "copper_only")
+        row = await (
+            await conn.execute(
+                "SELECT balance_units, balance_freebets FROM users WHERE id=%s", (user_id,)
             )
-            uid = (await cur.fetchone())["id"]
-            await conn.commit()
-            # random operations: ensure no cross-currency leakage
-            for _ in range(100):
-                curu = await (
-                    await conn.execute(
-                        "SELECT balance_units, balance_freebets FROM users WHERE id = %s", (uid,)
-                    )
-                ).fetchone()
-                assert curu["balance_units"] >= 0
-                assert curu["balance_freebets"] >= 0
-            await conn.execute("DELETE FROM users WHERE id = %s", (uid,))
-            await conn.commit()
-    finally:
-        await close_pool()
-
-
-asyncio.run(main())
-print("no cross currency ok")
+        ).fetchone()
+        assert row["balance_units"] == 1000
+        assert row["balance_freebets"] == 400

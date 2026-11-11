@@ -1,14 +1,14 @@
 import { defineConfig } from "@playwright/test";
 
-// Порт можно переопределить: E2E_PORT=8001 npx playwright test
-// (по умолчанию 8000 — как в CI)
-const port = Number(process.env.E2E_PORT ?? 8000);
+// Изолированный сервер тестов; не подключаемся к чужому сервису на занятом порту.
+const port = Number(process.env.E2E_PORT ?? 8123);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Некорректный E2E_PORT');
 
 export default defineConfig({
   webServer: {
-    command: `npx serve . -l ${port}`,
+    command: `npx --no-install serve . -l ${port}`,
     port,
-    reuseExistingServer: true,
+    reuseExistingServer: false,
   },
   use: { baseURL: `http://localhost:${port}` },
   testDir: "./tests/e2e",

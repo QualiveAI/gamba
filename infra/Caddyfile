@@ -2,6 +2,11 @@
     # Статика мини-аппа WINDROP: /app/* -> ../frontend (префикс срезается)
     handle_path /app/* {
         root * /srv/app
+        @app_assets path_regexp app_assets \.((webp|png|jpg|jpeg|svg|ico))$
+        handle @app_assets {
+            header Cache-Control "public, max-age=31536000, immutable"
+            file_server
+        }
         header Cache-Control "no-cache"
         try_files {path} /index.html
         file_server

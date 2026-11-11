@@ -1,0 +1,52 @@
+{
+    admin off
+}
+
+{$PUBLIC_DOMAIN} {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+    }
+
+    @private path /metrics /health /health/* /docs /redoc /openapi.json
+    handle @private {
+        respond 404
+    }
+
+    handle_path /app/* {
+        root * /srv/app
+        @app_assets path_regexp app_assets \.((webp|png|jpg|jpeg|svg|ico))$
+        handle @app_assets {
+            header Cache-Control "public, max-age=31536000, immutable"
+            file_server
+        }
+        header Cache-Control "no-cache"
+        try_files {path} /index.html
+        file_server
+    }
+    handle {
+        # Технический primary/standby API, без смены аккаунтов или DB writer.
+        reverse_proxy api:8000 api-standby:8000 {
+            lb_policy first
+            health_uri /health/ready
+            health_interval 10s
+            health_timeout 4s
+            health_status 200
+            health_fails 2
+            health_passes 2
+            fail_duration 15s
+            max_fails 2
+            lb_try_duration 4s
+            lb_try_interval 250ms
+            # POST не переигрывается автоматически, включая платежи и webhook.
+            lb_retry_match {
+                method GET HEAD
+            }
+            transport http {
+                dial_timeout 3s
+                response_header_timeout 30s
+            }
+        }
+    }
+}

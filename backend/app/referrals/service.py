@@ -1,5 +1,15 @@
+import re
+
+from psycopg.types.json import Jsonb
+
+from app.config import settings
+
+
 async def create_referral_link(user_id: int) -> str:
-    return f"https://t.me/robloxcasebot?start=ref_{user_id}"
+    username = getattr(settings, "bot_username", "").lstrip("@")
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+        raise ValueError("bot_username_not_configured")
+    return f"https://t.me/{username}?start=ref_{user_id}"
 
 
 async def handle_referral(
@@ -8,45 +18,61 @@ async def handle_referral(
     referrer_id: int,
     signup_ip: str | None = None,
     device_fingerprint: str | None = None,
-):  # noqa: E501
-    # anti-fraud: 3+ accounts same ip/device in 24h
-    if signup_ip:
+    *,
+    commit: bool = True,
+):
+    if new_user_id == referrer_id:
+        return {"status": "ignored"}
+    users = await (
+        await conn.execute(
+            "SELECT id FROM users WHERE id IN (%s, %s) AND is_guest = FALSE ORDER BY id FOR UPDATE",
+            (new_user_id, referrer_id),
+        )
+    ).fetchall()
+    if len(users) != 2:
+        return {"status": "ignored"}
+    existing = await (
+        await conn.execute("SELECT status FROM referrals WHERE referee_id = %s", (new_user_id,))
+    ).fetchone()
+    if existing:
+        return {"status": existing["status"]}
+    # Антифрод: три аккаунта с одинаковым IP/устройством за сутки.
+    for column, value, reason in (
+        ("signup_ip", signup_ip, "ip_abuse"),
+        ("device_fingerprint", device_fingerprint, "device_abuse"),
+    ):
+        if not value:
+            continue
         row = await (
             await conn.execute(
-                "SELECT COUNT(*) AS c FROM users WHERE signup_ip = %s AND created_at > now() - interval '24 hours'",  # noqa: E501
-                (signup_ip,),
+                f"SELECT COUNT(*) AS c FROM users WHERE {column} = %s "
+                "AND created_at > now() - interval '24 hours'",
+                (value,),
             )
         ).fetchone()
         if row and int(row["c"]) >= 3:
             await conn.execute(
                 "INSERT INTO referral_flags (user_id, reason, details) VALUES (%s, %s, %s)",
-                (new_user_id, "ip_abuse", {"ip": signup_ip}),
+                (new_user_id, reason, Jsonb({column: value})),
             )
-            await conn.commit()
+            if commit:
+                await conn.commit()
             return {"status": "flagged"}
-    if device_fingerprint:
-        row = await (
-            await conn.execute(
-                "SELECT COUNT(*) AS c FROM users WHERE device_fingerprint = %s AND created_at > now() - interval '24 hours'",  # noqa: E501
-                (device_fingerprint,),
-            )
-        ).fetchone()
-        if row and int(row["c"]) >= 3:
-            await conn.execute(
-                "INSERT INTO referral_flags (user_id, reason, details) VALUES (%s, %s, %s)",
-                (new_user_id, "device_abuse", {"fp": device_fingerprint}),
-            )
-            await conn.commit()
-            return {"status": "flagged"}
-    await conn.execute(
-        "INSERT INTO referrals (referrer_id, referee_id, status) VALUES (%s, %s, 'held')",
-        (referrer_id, new_user_id),
-    )
-    await conn.commit()
-    from app.analytics.events import track
-
-    await track(conn, new_user_id, "referral_signup", {"referrer_id": referrer_id})
-    await conn.commit()
+    row = await (
+        await conn.execute(
+            "INSERT INTO referrals (referrer_id, referee_id, status) VALUES (%s, %s, 'held') "
+            "ON CONFLICT (referee_id) DO NOTHING RETURNING id",
+            (referrer_id, new_user_id),
+        )
+    ).fetchone()
+    if row:
+        await conn.execute(
+            "INSERT INTO events (user_id, event_type, payload, idempotency_key) "
+            "VALUES (%s, 'referral_signup', %s, %s) ON CONFLICT (idempotency_key) DO NOTHING",
+            (new_user_id, Jsonb({"referrer_id": referrer_id}), f"referral_signup:{new_user_id}"),
+        )
+    if commit:
+        await conn.commit()
     return {"status": "held"}
 
 

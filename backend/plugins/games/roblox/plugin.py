@@ -33,7 +33,7 @@ class RobloxAdapter:
             async with conn.cursor() as cur:
                 await cur.execute(
                     "SELECT id, code, nominal_units, region FROM gift_codes "
-                "WHERE status = 'available'"
+                    "WHERE status = 'available'"
                 )
                 rows = await cur.fetchall()
             return [{"id": r[0], "code": r[1], "nominal_units": r[2], "region": r[3]} for r in rows]

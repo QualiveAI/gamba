@@ -1,342 +1,108 @@
-import asyncio
-import contextlib
+"""Неоднозначные legacy withdrawals нельзя автоматически проверять, выдавать или возвращать."""
+
+import uuid
+
+import pytest
 
 from app.db import get_conn
+from app.giftcards import service as cards
+from app.giftcards import verify
+from app.giftcards.security import GiftCardError
 from app.withdrawals import service
 
 
-class FakeSupplier:
-    def __init__(self, result=None, exc=None, sleep=0):
-        self.result = result
-        self.exc = exc
-        self.sleep = sleep
-        self.calls = 0
-
-    def check_code(self, code, brand, region):
-        self.calls += 1
-        if self.sleep:
-            import time
-
-            time.sleep(self.sleep)
-        if self.exc:
-            raise self.exc  # noqa: B904
-        return self.result
-
-
-async def _setup(conn):
-    from core.registry.registry import registry
-
-    registry._items.clear()
-    from core.registry.registry import registry
-
-    registry._items.clear()
-    await conn.execute(
-        "DELETE FROM withdrawals WHERE user_id IN (SELECT id FROM users WHERE telegram_id = %s)",
-        (999030,),
-    )
-    await conn.execute("DELETE FROM gift_codes WHERE code = %s", ("VERIFY1",))
-    await conn.execute("DELETE FROM users WHERE telegram_id = %s", (999030,))
-    cur = await conn.execute(
-        "INSERT INTO users (telegram_id, balance_units, region, created_at) VALUES (%s, %s, %s, now() - interval '2 days') RETURNING id",  # noqa: E501
-        (999030, 100000, "US"),
-    )
-    uid = (await cur.fetchone())["id"]
-    await conn.execute(
-        "INSERT INTO gift_codes (code, region, nominal_units, status) VALUES (%s, %s, %s, 'reserved')",  # noqa: E501
-        ("VERIFY1", "US", 100000),
-    )
-    code_row = await (
-        await conn.execute("SELECT id FROM gift_codes WHERE code = %s", ("VERIFY1",))
+async def setup_legacy(conn, *, status="approved", amount=1_000, nominal=800, fee=200):
+    user = await (
+        await conn.execute(
+            "INSERT INTO users (telegram_id, region) VALUES (%s, 'BR') RETURNING id",
+            (20_000_000_000 + uuid.uuid4().int % 1_000_000_000_000,),
+        )
     ).fetchone()
-    code_id = code_row["id"]
-    cur = await conn.execute(
-        "INSERT INTO withdrawals (user_id, amount_units, region, status, code_id) VALUES (%s, %s, %s, 'approved', %s) RETURNING id",  # noqa: E501
-        (uid, 100000, "US", code_id),
-    )
-    wid = (await cur.fetchone())["id"]
-    await conn.commit()
-    return uid, wid, code_id
-
-
-async def test_happy_issued():
-    async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
-        sup = FakeSupplier(
-            result=type("R", (), {"status": "activated", "delivered_units": 100000})()
-        )
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-        res = await service.finalize(conn, wid)
-        assert res["status"] == "issued"
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
-        ).fetchone()
-        assert row["status"] == "issued"
-        assert row["status"] != "manual_review"
-        assert sup.calls == 1
-
-
-async def test_mismatch_manual_review():
-    async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
-        await conn.execute("UPDATE gift_codes SET nominal_units = 99999 WHERE id = %s", (code_id,))
-        await conn.commit()
-        sup = FakeSupplier(
-            result=type("R", (), {"status": "activated", "delivered_units": 99999})()
-        )
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-        res = await service.finalize(conn, wid)
-        assert res["status"] == "manual_review"
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
-        ).fetchone()
-        assert row["status"] == "manual_review"
-        assert row["status"] != "issued"
-
-
-async def test_deferred_pending_supplier():
-    async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
-
-        from core.delivery.supplier_client import SupplierDown
-
-        sup = FakeSupplier(exc=SupplierDown())
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-        res = await service.finalize(conn, wid)
-        assert res["status"] == "pending_supplier"
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
-        ).fetchone()
-        assert row["status"] == "pending_supplier"
-        assert row["status"] != "issued"
-
-
-async def test_not_activated_deferred():
-    async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
-        sup = FakeSupplier(
-            result=type("R", (), {"status": "not_activated", "delivered_units": 0})()
-        )
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-        with contextlib.suppress(Exception):
-            await service.finalize(conn, wid)
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
-        ).fetchone()
-        assert row["status"] != "issued"
-
-
-async def test_timeout_manual_review():
-    async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
-
-        class SlowSupplier(FakeSupplier):
-            async def check_code(self, code, brand, region):
-                await asyncio.sleep(20)
-                return type("R", (), {"status": "activated", "delivered_units": 100000})()
-
-        sup = SlowSupplier()
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-        res = await service.finalize(conn, wid)
-        assert res["status"] == "manual_review"
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
-        ).fetchone()
-        assert row["status"] == "manual_review"
-        assert row["status"] != "issued"
-
-
-def test_no_stub_guard():
-    import inspect
-
-    import core.delivery.settlement as s
-
-    src = inspect.getsource(s.verify_delivery)
-    assert 'return {"verified": True' not in src
-    assert "raise SettlementMismatch" in src or "SettlementMismatch(" in src  # noqa: B904
-
-
-async def test_fee_semantics_happy():
-    async with get_conn() as conn:
+    card = await (
         await conn.execute(
-            "DELETE FROM withdrawals WHERE user_id IN (SELECT id FROM users WHERE telegram_id = %s)",  # noqa: E501
-            (999031,),
+            "INSERT INTO gift_codes (code, region, nominal_units, status, reserved_by, "
+            "reserved_at, issued_at) VALUES (%s, 'BR', %s, 'issued', %s, "
+            "now() - interval '30 days', now() - interval '30 days') RETURNING id",
+            ("TEST-ONLY-LEGACY-" + uuid.uuid4().hex, nominal, user["id"]),
         )
-        await conn.execute("DELETE FROM gift_codes WHERE code = %s", ("VERIFY2",))
-        await conn.execute("DELETE FROM users WHERE telegram_id = %s", (999031,))
-        cur = await conn.execute(
-            "INSERT INTO users (telegram_id, balance_units, region, created_at) VALUES (%s, %s, %s, now() - interval '2 days') RETURNING id",  # noqa: E501
-            (999031, 100000, "US"),
-        )
-        uid = (await cur.fetchone())["id"]
+    ).fetchone()
+    order = await (
         await conn.execute(
-            "INSERT INTO gift_codes (code, region, nominal_units, status) VALUES (%s, %s, %s, 'reserved')",  # noqa: E501
-            ("VERIFY2", "US", 800),
+            "INSERT INTO withdrawals (user_id, amount_units, region, status, code_id, fee_units) "
+            "VALUES (%s, %s, 'BR', %s, %s, %s) RETURNING id",
+            (user["id"], amount, status, card["id"], fee),
         )
-        code_row = await (
-            await conn.execute("SELECT id FROM gift_codes WHERE code = %s", ("VERIFY2",))
-        ).fetchone()
-        code_id = code_row["id"]
-        cur = await conn.execute(
-            "INSERT INTO withdrawals (user_id, amount_units, region, status, code_id, fee_units) VALUES (%s, %s, %s, 'approved', %s, %s) RETURNING id",  # noqa: E501
-            (uid, 1000, "US", code_id, 200),
-        )
-        wid = (await cur.fetchone())["id"]
-        await conn.commit()
-
-        sup = FakeSupplier(result=type("R", (), {"status": "activated", "delivered_units": 800})())
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-        res = await service.finalize(conn, wid)
-        assert res["status"] == "issued"
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
-        ).fetchone()
-        assert row["status"] == "issued"
-        assert row["status"] != "manual_review"
-
-        # negative: delivered 1000 (wrong)
-        await conn.execute("DELETE FROM withdrawals WHERE id = %s", (wid,))
-        cur = await conn.execute(
-            "INSERT INTO withdrawals (user_id, amount_units, region, status, code_id, fee_units) VALUES (%s, %s, %s, 'approved', %s, %s) RETURNING id",  # noqa: E501
-            (uid, 1000, "US", code_id, 200),
-        )
-        wid2 = (await cur.fetchone())["id"]
-        await conn.commit()
-        sup2 = FakeSupplier(
-            result=type("R", (), {"status": "activated", "delivered_units": 1000})()
-        )
-        sup2.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry.register(sup2)
-        res2 = await service.finalize(conn, wid2)
-        assert res2["status"] == "manual_review"
-        row2 = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid2,))
-        ).fetchone()
-        assert row2["status"] == "manual_review"
-        assert row2["status"] != "issued"
+    ).fetchone()
+    return user["id"], order["id"], card["id"]
 
 
-async def test_supplier_down_deferred():
+@pytest.mark.parametrize(
+    "status", ["pending", "approved", "pending_supplier", "manual_review", "issued"]
+)
+async def test_finalize_legacy_is_read_only_manual_review(status, monkeypatch):
+    async def forbidden_supplier_call(*args, **kwargs):
+        raise AssertionError("Старые заявки не должны вызывать поставщика.")
+
+    monkeypatch.setattr("core.delivery.router.verify_delivery", forbidden_supplier_call)
     async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
-        from core.delivery.router import DeliveryDeferred, verify_delivery
-        from core.delivery.supplier_client import SupplierDown
-
-        sup = FakeSupplier(exc=SupplierDown())
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
-
-        raised = None
-        try:
-            await verify_delivery(code_id)
-        except Exception as e:  # noqa: BLE001
-            raised = e
-        assert type(raised) is DeliveryDeferred
-        assert getattr(raised, "reason", None) == "supplier_down"
-
-        res = await service.finalize(conn, wid)
-        assert res["status"] == "pending_supplier"
-        row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
+        async with conn.transaction():
+            _, withdrawal_id, card_id = await setup_legacy(conn, status=status)
+        result = await service.finalize(conn, withdrawal_id)
+        assert result == {"status": "manual_review", "legacy": True, "read_only": True}
+        stored = await (
+            await conn.execute(
+                "SELECT status, fee_units FROM withdrawals WHERE id = %s", (withdrawal_id,)
+            )
         ).fetchone()
-        assert row["status"] == "pending_supplier"
-        assert row["status"] != "issued"
+        card = await (
+            await conn.execute("SELECT status FROM gift_codes WHERE id = %s", (card_id,))
+        ).fetchone()
+    assert stored == {"status": status, "fee_units": 200}
+    assert card["status"] == "issued"
 
 
-async def test_supplier_bug_propagates():
+async def test_legacy_fee_or_matching_amount_is_not_an_operator_sku_mapping():
     async with get_conn() as conn:
-        uid, wid, code_id = await _setup(conn)
+        async with conn.transaction():
+            _, withdrawal_id, _ = await setup_legacy(conn, amount=1_000, nominal=1_000, fee=0)
+        assert (await service.finalize(conn, withdrawal_id))["status"] == "manual_review"
 
-        sup = FakeSupplier(exc=KeyError("missing_field"))
-        sup.MANIFEST = {
-            "key": "US",
-            "type": "supplier",
-            "geo": None,
-            "version": "1",
-            "enabled_env": None,
-        }
-        registry = __import__("core.registry.registry", fromlist=["registry"]).registry
-        registry._items.clear()
-        registry.register(sup)
 
-        raised = None
-        try:
-            await service.finalize(conn, wid)
-        except KeyError as e:
-            raised = e
-        assert type(raised) is KeyError
-        assert raised.args == ("missing_field",)
-
+async def test_legacy_mutations_are_closed_and_never_refund_or_return_stock():
+    async with get_conn() as conn:
+        async with conn.transaction():
+            user_id, withdrawal_id, card_id = await setup_legacy(conn, status="pending")
+        calls = [
+            lambda: service.approve(conn, withdrawal_id),
+            lambda: service.reject(conn, withdrawal_id, "rejected"),
+            lambda: service.unfreeze(conn, withdrawal_id),
+            lambda: cards.issue(conn, card_id),
+            lambda: service.request(conn, {"id": user_id}, 1_000, "BR"),
+        ]
+        for call in calls:
+            with pytest.raises(GiftCardError) as error:
+                await call()
+            assert error.value.code == "legacy_read_only"
         row = await (
-            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (wid,))
+            await conn.execute("SELECT status FROM withdrawals WHERE id = %s", (withdrawal_id,))
         ).fetchone()
-        assert row["status"] == "approved"
-        assert row["status"] != "pending_supplier"
-        assert row["status"] != "issued"
+        ledger = await (
+            await conn.execute(
+                "SELECT COUNT(*) AS c FROM ledger_entries WHERE user_id = %s", (user_id,)
+            )
+        ).fetchone()
+    assert row["status"] == "pending"
+    assert ledger["c"] == 0
+
+
+async def test_expired_reservation_and_old_verifier_never_recycle_assigned_legacy_code():
+    async with get_conn() as conn:
+        async with conn.transaction():
+            _, _, card_id = await setup_legacy(conn)
+        assert await cards.release_expired(conn) == 0
+        assert (await verify.run_verification(conn, card_id))["status"] == "manual_review"
+        await verify.schedule_verify(conn, card_id)
+        card = await (
+            await conn.execute("SELECT status FROM gift_codes WHERE id = %s", (card_id,))
+        ).fetchone()
+    assert card["status"] == "issued"

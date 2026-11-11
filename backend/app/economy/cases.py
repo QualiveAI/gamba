@@ -2,6 +2,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from app.catalog_localization import item_name
 from app.economy.rng import ProvablyFairRNG
 from app.economy.rtp import resolve_rtp
 from app.economy.segments import compute_segment
@@ -150,8 +151,13 @@ async def open_case(conn, user, case_id, client_seed):
         "INSERT INTO user_items (user_id, label, game_key, currency, value_coins, rarity, image) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s)",
         (
-            user["id"], reward["label"], reward["game_key"], case_currency,
-            credit, reward["rarity"] or _rarity(credit, price), reward["image"],
+            user["id"],
+            item_name(reward["label"]),
+            reward["game_key"],
+            case_currency,
+            credit,
+            reward["rarity"] or _rarity(credit, price),
+            reward["image"],
         ),
     )
     if credit >= 100:
@@ -190,7 +196,7 @@ async def open_case(conn, user, case_id, client_seed):
         "reward_type": reward["reward_type"],
         "game_key": reward["game_key"],
         "nominal_units": int(reward["nominal_units"]),
-        "item": reward["label"],
+        "item": item_name(reward["label"]),
         "image": reward["image"],
         "rarity": reward["rarity"] or _rarity(credit, price),
         "chance_pct": round(float(reward["weight"]) / W * 100, 3) if W else 0,

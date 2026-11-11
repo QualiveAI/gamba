@@ -1,126 +1,149 @@
+import asyncio
 import uuid
+from dataclasses import replace
 
 import pytest
 
 from app.db import get_conn
-from core.payments.events import ingest, link_intent, process_pending
-from core.payments.intents import create_intent
+from core.contracts.payment import PaymentError
+from core.payments.apply import apply_event
+from core.payments.events import ingest, process_event, record_verified_event
+from core.payments.intents import get_intent
+from core.payments.sandbox import SandboxAdapter
 
 
-async def _user_id(tg=None):
-    if tg is None:
-        tg = 900000 + (uuid.uuid4().int % 100000)
+def evidence_for(intent, **changes):
+    adapter = SandboxAdapter()
+    adapter.rail_key = intent.rail
+    return replace(adapter.sandbox_evidence(intent), **changes)
+
+
+@pytest.mark.asyncio
+async def test_ingest_immutable_payload(payment_runtime):
+    key = uuid.uuid4().hex
+    first = await ingest("paygate", key, {"x": 1}, mode="sandbox")
+    assert await ingest("paygate", key, {"x": 1}, mode="sandbox") == first
+    with pytest.raises(PaymentError) as exc:
+        await ingest("paygate", key, {"x": 2}, mode="sandbox")
+    assert exc.value.code == "event_payload_conflict"
+
+
+@pytest.mark.asyncio
+async def test_raw_success_untrusted(payment_factory):
+    user, _, intent = await payment_factory()
+    eid = await ingest(
+        "paygate",
+        uuid.uuid4().hex,
+        {"status": "succeeded", "verified": True, "amount_minor": 100, "user_id": user["id"]},
+        intent.id,
+        mode="sandbox",
+    )
     async with get_conn() as conn:
-        await conn.execute(
-            "INSERT INTO users (telegram_id, balance_units, region, created_at) "
-            "VALUES (%s, 0, 'US', now()) ON CONFLICT (telegram_id) DO NOTHING",
-            (tg,),
+        result = await process_event(conn, eid)
+        assert result.status == "rejected_unverified" and not result.credited
+        refused = await apply_event(
+            conn, {"amount_minor": 100, "currency": "units", "user_id": user["id"]}
         )
-        await conn.commit()
-        row = await (
-            await conn.execute("SELECT id FROM users WHERE telegram_id = %s", (tg,))
-        ).fetchone()
-    return row["id"]
+        assert refused.status == "rejected_unverified"
+    assert (await get_intent(intent.id)).status == "pending"
 
 
 @pytest.mark.asyncio
-async def test_ingest_persists():
-    key = f"evt-persist-{uuid.uuid4().hex}"
-    eid = await ingest("mock", key, {"foo": "bar"})
+@pytest.mark.parametrize("status", ["pending", "failed", "expired"])
+async def test_non_success_never_credits(payment_factory, status):
+    user, _, intent = await payment_factory()
+    evidence = evidence_for(intent, status=status)
     async with get_conn() as conn:
-        row = await (
-            await conn.execute("SELECT * FROM payment_events WHERE id = %s", (eid,))
+        event_id = await record_verified_event(conn, evidence)
+        result = await process_event(conn, event_id)
+        assert not result.credited and result.status == status
+        balance = await (
+            await conn.execute("SELECT balance_units FROM users WHERE id=%s", (user["id"],))
         ).fetchone()
-    assert row is not None
-    assert row["rail"] == "mock"
-    assert row["provider_event_id"] == key
-    assert row["processed_at"] is None
-    assert eid != -1
+        assert balance["balance_units"] == 0
 
 
 @pytest.mark.asyncio
-async def test_ingest_idempotent():
-    key = f"evt-idem-{uuid.uuid4().hex}"
-    first = await ingest("mock", key, {"x": 1})
-    second = await ingest("mock", key, {"x": 2})
-    assert first == second
+async def test_sandbox_guest_never_touches_live_balance(payment_factory):
+    user, _, intent = await payment_factory(guest=True)
+    async with get_conn() as conn:
+        event_id = await record_verified_event(conn, evidence_for(intent))
+        result = await process_event(conn, event_id)
+        assert result.status == "sandbox_processed" and not result.credited and result.sandbox
+        wallet = await (
+            await conn.execute("SELECT balance_units FROM users WHERE id=%s", (user["id"],))
+        ).fetchone()
+        ledger = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM ledger_entries WHERE user_id=%s", (user["id"],)
+            )
+        ).fetchone()
+        assert wallet["balance_units"] == 0 and ledger["n"] == 0
+    assert (await get_intent(intent.id)).status == "sandbox_succeeded"
+
+
+@pytest.mark.asyncio
+async def test_two_events_one_intent_only_one_settlement(payment_factory):
+    _, _, intent = await payment_factory()
+    ids = []
+    async with get_conn() as conn:
+        for suffix in ("poll", "webhook"):
+            ids.append(
+                await record_verified_event(
+                    conn,
+                    evidence_for(
+                        intent,
+                        provider_event_id=f"event:{intent.id}:{suffix}",
+                    ),
+                )
+            )
+
+    async def process(event_id):
+        async with get_conn() as conn, conn.transaction():
+            return await process_event(conn, event_id)
+
+    results = await asyncio.gather(*(process(eid) for eid in ids))
+    assert sorted(item.status for item in results) == ["duplicate", "sandbox_processed"]
     async with get_conn() as conn:
         row = await (
             await conn.execute(
-                "SELECT COUNT(*) AS c FROM payment_events WHERE rail='mock' AND provider_event_id=%s",
-                (key,),
+                "SELECT count(*) AS n FROM events WHERE idempotency_key=%s",
+                (f"deposit:{intent.id}",),
             )
         ).fetchone()
-        assert row["c"] == 1
-        assert row["c"] != 2
+        assert row["n"] == 1
 
 
 @pytest.mark.asyncio
-async def test_process_pending_credits():
-    uid = await _user_id()
-    ikey = f"intent-{uuid.uuid4().hex}"
-    ekey = f"evt-{uuid.uuid4().hex}"
-    intent = await create_intent(uid, "default", "mock", 500, "units", ikey)
-    eid = await ingest("mock", ekey, {"ok": True}, intent_id=intent.id)
-    results = await process_pending()
-    assert any(r["id"] == eid and r["status"] == "processed" for r in results)
+async def test_wrong_amount_and_destination_rejected(payment_factory):
+    _, _, intent = await payment_factory(method="crypto")
     async with get_conn() as conn:
+        eid = await record_verified_event(conn, evidence_for(intent, address="different"))
+        result = await process_event(conn, eid)
+        assert result.status == "crypto_destination_mismatch"
+        eid = await record_verified_event(
+            conn,
+            evidence_for(
+                intent,
+                provider_event_id="amount:" + intent.id,
+                amount_atomic=intent.provider_amount_atomic + 1,
+            ),
+        )
+        result = await process_event(conn, eid)
+        assert result.status == "payment_amount_currency_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_retains_verified_inbox(payment_factory):
+    _, _, intent = await payment_factory()
+    async with get_conn() as conn:
+        eid = await record_verified_event(conn, evidence_for(intent))
+        await conn.execute(
+            "UPDATE system_config SET value='{\"value\":false}' WHERE key='deposits_enabled'"
+        )
+        result = await process_event(conn, eid)
         row = await (
-            await conn.execute("SELECT balance_units FROM users WHERE id = %s", (uid,))
+            await conn.execute("SELECT processed_at FROM payment_events WHERE id=%s", (eid,))
         ).fetchone()
-        ev = await (
-            await conn.execute(
-                "SELECT processed_at, outcome FROM payment_events WHERE id = %s", (eid,)
-            )
-        ).fetchone()
-    assert int(row["balance_units"]) == 500
-    assert ev["processed_at"] is not None
-    assert ev["outcome"] == "processed"
-
-
-@pytest.mark.asyncio
-async def test_process_pending_skips_no_intent():
-    ekey = f"evt-{uuid.uuid4().hex}"
-    eid = await ingest("mock", ekey, {"ok": True})
-    results = await process_pending()
-    assert any(r["id"] == eid and r["status"] == "skipped_no_intent" for r in results)
-    async with get_conn() as conn:
-        ev = await (
-            await conn.execute("SELECT processed_at FROM payment_events WHERE id = %s", (eid,))
-        ).fetchone()
-    assert ev["processed_at"] is None
-
-
-@pytest.mark.asyncio
-async def test_process_pending_idempotent_no_double_credit():
-    uid = await _user_id()
-    ikey = f"intent-{uuid.uuid4().hex}"
-    ekey1 = f"evt-{uuid.uuid4().hex}"
-    ekey2 = f"evt-{uuid.uuid4().hex}"
-    intent = await create_intent(uid, "default", "mock", 100, "units", ikey)
-    await ingest("mock", ekey1, {"ok": True}, intent_id=intent.id)
-    await process_pending()
-    await ingest("mock", ekey2, {"ok": True}, intent_id=intent.id)
-    await process_pending()
-    async with get_conn() as conn:
-        row = await (
-            await conn.execute("SELECT balance_units FROM users WHERE id = %s", (uid,))
-        ).fetchone()
-    assert int(row["balance_units"]) == 200
-    assert int(row["balance_units"]) != 0
-
-
-@pytest.mark.asyncio
-async def test_link_intent():
-    uid = await _user_id()
-    ikey = f"intent-{uuid.uuid4().hex}"
-    ekey = f"evt-{uuid.uuid4().hex}"
-    intent = await create_intent(uid, "default", "mock", 50, "units", ikey)
-    eid = await ingest("mock", ekey, {"ok": True})
-    await link_intent(eid, intent.id)
-    async with get_conn() as conn:
-        row = await (
-            await conn.execute("SELECT intent_id FROM payment_events WHERE id = %s", (eid,))
-        ).fetchone()
-    assert row["intent_id"] == intent.id
-    assert row["intent_id"] != "other"
+        assert result.status == "payment_kill_switch" and row["processed_at"] is None
+    assert (await get_intent(intent.id)).status == "pending"

@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
+from app.catalog_localization import item_name
+from app.config import settings
 from app.db import get_conn
 
 router = APIRouter(tags=["wallet"])
@@ -52,8 +54,12 @@ async def my_referrals(user=Depends(get_current_user)):  # noqa: B008
                 (user["id"],),
             )
         ).fetchone()
+    try:
+        link = await create_referral_link(user["id"])
+    except ValueError:
+        raise HTTPException(status_code=503, detail="bot_not_configured") from None
     return ReferralInfo(
-        link=await create_referral_link(user["id"]),
+        link=link,
         invited=int(invited["c"]),
         confirmed=int(confirmed["c"]),
     )
@@ -64,7 +70,8 @@ async def my_inventory(user=Depends(get_current_user)):  # noqa: B008
     async with get_conn() as conn:
         rows = await (
             await conn.execute(
-                "SELECT id, label, game_key, currency, value_coins, rarity, image, status, created_at "
+                "SELECT id, label, game_key, currency, value_coins, rarity, image, "
+                "status, created_at "
                 "FROM user_items WHERE user_id = %s AND status = 'active' "
                 "ORDER BY id DESC",
                 (user["id"],),
@@ -90,9 +97,7 @@ async def sell_item(item_id: int, user=Depends(get_current_user)):  # noqa: B008
             raise HTTPException(status_code=404, detail="item not found")  # noqa: B904
         value = int(row["value_coins"])
         currency = row["currency"] or "units"
-        await conn.execute(
-            "UPDATE user_items SET status = 'sold' WHERE id = %s", (row["id"],)
-        )
+        await conn.execute("UPDATE user_items SET status = 'sold' WHERE id = %s", (row["id"],))
         await post_entry(conn, user["id"], currency, value, "item_sold", f"item:{row['id']}")
         await conn.commit()
     return {"sold": True, "value": value, "currency": currency}
@@ -107,7 +112,9 @@ class UpgradeTarget(BaseModel):
 
 @router.post("/inventory/{item_id}/upgrade")
 async def upgrade_item(  # noqa: B008
-    item_id: int, body: UpgradeTarget, user=Depends(get_current_user)  # noqa: B008
+    item_id: int,
+    body: UpgradeTarget,
+    user=Depends(get_current_user),  # noqa: B008
 ):
     """Апгрейд предмета: успех -> целевой предмет из каталога, провал -> предмет потерян."""
     import secrets as _secrets
@@ -125,8 +132,8 @@ async def upgrade_item(  # noqa: B008
         target = int(body.target_value)
         if target <= int(row["value_coins"]):
             raise HTTPException(  # noqa: B904
-            status_code=400, detail="target must be higher"
-        )
+                status_code=400, detail="target must be higher"
+            )
         chance = min(0.8, row["value_coins"] / target * 0.8)
         roll = _secrets.randbelow(10_000) / 10_000
         success = roll < chance
@@ -143,12 +150,14 @@ async def upgrade_item(  # noqa: B008
                 ),
             )
         else:
-            await conn.execute(
-                "UPDATE user_items SET status = 'lost' WHERE id = %s", (row["id"],)
-            )
+            await conn.execute("UPDATE user_items SET status = 'lost' WHERE id = %s", (row["id"],))
         await conn.commit()
-    return {"success": success, "chance": round(chance, 4), "roll": round(roll, 4),
-            "value": target if success else 0}
+    return {
+        "success": success,
+        "chance": round(chance, 4),
+        "roll": round(roll, 4),
+        "value": target if success else 0,
+    }
 
 
 @router.get("/wallet/history")
@@ -172,6 +181,7 @@ async def wallet_history(user=Depends(get_current_user)):  # noqa: B008
                 (user["id"],),
             )
         ).fetchall()
+    hidden_reasons = {"sandbox_preview", "qa_setup", "test_setup"}
     items = [
         {
             "t": r["created_at"].isoformat(),
@@ -181,12 +191,13 @@ async def wallet_history(user=Depends(get_current_user)):  # noqa: B008
             "text": r["reason"],
         }
         for r in ledger
+        if settings.env.lower() in {"dev", "test"} or r["reason"] not in hidden_reasons
     ]
     items += [
         {
             "t": r["created_at"].isoformat(),
             "kind": "item",
-            "text": r["label"],
+            "text": item_name(r["label"]),
             "image": r["image"],
             "rarity": r["rarity"],
             "currency": r["currency"] or "units",

@@ -1,5 +1,4 @@
-/* WINDROP mini-app: интерфейс из демо + реальный API.
-   Один файл: helpers, state, роутинг, вьюхи (Caixas/Jogos/Aprimorar/Mochila/Perfil), fx. */
+/* WINDROP mini-app: существующие игры/каталог и безопасные формы профиля. */
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => Math.round(n).toLocaleString('pt-BR');
@@ -17,9 +16,6 @@ const tierRank = id => TIER_ORDER.indexOf(id);
 const coin = (c = 'gold') => `<span class="coin ${c === 'copper' ? 'copper' : ''}" aria-hidden="true"></span>`;
 const cur = c => c === 'freebets' ? 'cobre' : 'ouro';
 const money = (n, c = 'gold') => `${coin(c)}${fmt(n)}`;
-// Курс для отображения в реалах (1 USD = 5.40 BRL) — менять в одном месте
-const USD_BRL = 5.4;
-const brl = usd => `R$ ${(usd * USD_BRL).toFixed(2).replace('.', ',')}`;
 const img = (src, alt) => src ? `<img src="${esc(src)}" alt="${esc(alt)}" decoding="async" loading="lazy">` : '<span class="ph"></span>';
 document.addEventListener('error', e => { if (e.target.tagName === 'IMG') e.target.classList.add('broken') }, true);
 
@@ -35,35 +31,21 @@ const ICON = {
 };
 const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
-/* ---------- API (Telegram WebApp -> JWT) ---------- */
-try {
-  const tg = (window.Telegram && window.Telegram.WebApp) || { ready() {}, expand() {}, initData: '' };
-  tg.ready(); tg.expand();
-} catch (e) {}
-let jwtToken = sessionStorage.getItem('jwt') || '';
-async function api(path, options = {}) {
-  if (!jwtToken) {
-    const tg2 = (window.Telegram && window.Telegram.WebApp) || { initData: '' };
-    const res = await fetch(window.location.origin + '/auth/telegram', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ init_data: tg2.initData || '' }),
-    });
-    if (!res.ok) throw new Error('auth failed');
-    const data = await res.json();
-    jwtToken = data.access_token;
-    sessionStorage.setItem('jwt', jwtToken);
-  }
-  const headers = Object.assign({ Authorization: 'Bearer ' + jwtToken }, options.headers || {});
-  const res = await fetch(window.location.origin + path, Object.assign({}, options, { headers }));
-  if (res.status === 401) {
-    jwtToken = '';
-    sessionStorage.removeItem('jwt');
-    return api(path, options);
-  }
-  if (!res.ok) throw new Error((await res.text()).slice(0, 140));
-  return res.json();
-}
+/* ---------- API (Telegram WebApp -> JWT в памяти) ---------- */
+const getTelegram = () => window.Telegram && window.Telegram.WebApp;
+try { const tg = getTelegram(); if (tg) { tg.ready(); tg.expand(); } } catch (_) {}
+let sessionStore;
+try { sessionStore = window.sessionStorage; } catch (_) {}
+const apiClient = WindropApi.createClient({ origin: window.location.origin, search: window.location.search,
+  getTelegram, storage: sessionStore });
+const api = (path, options) => apiClient.request(path, options);
+const commerce = WindropCommerce.createCommerce({ client: apiClient, storage: sessionStore, getTelegram,
+  onChange: updateCommerceSection, onWalletChange: async () => {
+    await refreshWallet();
+    updateProfileBalance();
+  } });
+let initialState = 'loading', initialError = '', initialAuthError = false, initialPromise = null;
+let profileRefreshPromise = null, profileLastRefresh = -Infinity;
 
 /* ---------- state ---------- */
 const S = { gold: 0, copper: 0 };
@@ -82,9 +64,11 @@ function setBal(g, p) {
 }
 function renderBal(pg, pp) {
   const el = $('#bg'), ec = $('#bc');
-  ec.innerHTML = money(S.copper, 'copper');
-  if (pg === undefined || pg === S.gold || reduced) { el.innerHTML = money(S.gold, 'gold'); return }
   cancelAnimationFrame(renderBal.raf);
+  ec.innerHTML = money(S.copper, 'copper');
+  if (initialState !== 'ready' || document.hidden || pg === undefined || pg === S.gold || reduced) {
+    el.innerHTML = money(S.gold, 'gold'); el.classList.remove('up', 'down'); return;
+  }
   const t0 = performance.now();
   el.classList.remove('up', 'down'); el.classList.add(S.gold > pg ? 'up' : 'down');
   const st = t => {
@@ -162,21 +146,33 @@ async function loadCatalog() {
   CATALOG = rows.map(c => ({
     id: c.id, name: c.name, price: c.price_units, currency: c.currency || 'units',
     cover: c.cover,
-    rewards: (c.rewards || []).map(r => ({
+    rewards: (c.rewards || []).map((r, index) => ({
       rid: r.id, name: r.label || 'Item', tier: r.rarity && TIERS[r.rarity] ? r.rarity : 'common',
       chance: r.chance_pct ?? 0, value: r.nominal_units, image: r.image, caseId: c.id,
-      caseCurrency: c.currency || 'units',
-    })).sort((a, b) => b.value - a.value),
+      caseCurrency: c.currency || 'units', _order: index,
+    })).sort((a, b) => tierRank(b.tier) - tierRank(a.tier) || b.value - a.value || a._order - b._order),
   }));
 }
+let walletRequestVersion = 0;
 async function refreshWallet() {
+  const version = ++walletRequestVersion;
   const d = await api('/wallet');
-  setBal(d.units_minor ?? d.units ?? 0, d.freebets_units ?? d.freebets ?? 0);
+  if (version === walletRequestVersion) { setBal(d.units_minor ?? d.units ?? 0, d.freebets_units ?? d.freebets ?? 0); updateProfileBalance(); }
 }
 async function refreshInv() { INV = await api('/inventory'); }
 async function refreshHist() { try { HIST = await api('/wallet/history') } catch (e) { HIST = [] } }
 async function refreshDaily() { try { DAILY = await api('/rewards/daily/status') } catch (e) {} }
-async function refreshRefs() { try { REFS = await api('/referrals/my') } catch (e) {} }
+async function refreshRefs() {
+  try {
+    const data = await api('/referrals/my');
+    const safeCount = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    REFS = { link: WindropCommerce.safeReferralLink(data?.link) || '',
+      invited: safeCount(data?.invited), confirmed: safeCount(data?.confirmed) };
+  } catch (_) {
+    // Ошибка сервера делает ранее полученную ссылку недоступной, а не оставляет старый CTA.
+    REFS = { link: '', invited: 0, confirmed: 0 };
+  }
+}
 async function applyBrand() {
   try {
     const t = await api('/meta/tenant');
@@ -187,16 +183,68 @@ async function applyBrand() {
 
 /* ---------- routing ---------- */
 let tab = 'cases', sub = null, cat = 'gold';
-function go(t, s = null) { leaveStakeGames(); stopGames(); tab = t; sub = s; render(); const v = $('#view'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); window.scrollTo(0, 0) }
+let profileTarget = WindropCommerce.navigationTarget(window.location.hash, getTelegram()?.initDataUnsafe?.start_param);
+if (profileTarget) tab = 'profile';
+function go(t, s = null) {
+  leaveStakeGames(); stopGames(); tab = t; sub = s;
+  render();
+  const v = $('#view'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); window.scrollTo(0, 0);
+  if (tab === 'profile' && initialState === 'ready') { void refreshProfile(); scrollProfileTarget(); }
+}
 function render() {
   $$('.nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   const v = $('#view');
+  if (initialState !== 'ready') {
+    v.innerHTML = initialState === 'loading' ? '<section class="card" role="status"><h1 class="title">Carregando…</h1><p class="form-note">Validando a sessão do Telegram e consultando o servidor.</p></section>'
+      : `<section class="card" role="alert"><h1 class="title">${initialAuthError ? 'Abrir pelo Telegram' : 'Serviço indisponível'}</h1><p class="form-error">${esc(initialError)}</p><p class="form-note">${initialAuthError ? 'Use /start no bot principal e toque no botão da Mini App. Se o link pessoal não funcionar, abra novamente pelo bot principal. Nenhuma conta de visitante será criada.' : 'Não foi possível carregar seus dados. O catálogo não foi substituído por dados temporários.'}</p><button class="cta" data-initretry>Tentar novamente</button></section>`;
+    return;
+  }
   v.innerHTML = tab === 'cases' ? (sub ? vCase(sub) : vCases())
     : tab === 'games' ? (sub ? vGame(sub) : vGames())
     : tab === 'upgrade' ? vUpgrade()
     : tab === 'inventory' ? vInventory()
     : vProfile();
-  if (tab === 'profile') { loadDepositMethods(); window.updateWdPreview() }
+  if (tab === 'profile') { void commerce.load(); void refreshProfile(); }
+}
+function scrollProfileTarget() {
+  if (tab !== 'profile' || !profileTarget || initialState !== 'ready') return;
+  const target = document.getElementById(profileTarget);
+  if (target) { target.scrollIntoView({ block: 'start' }); profileTarget = null; }
+}
+window.addEventListener('hashchange', () => {
+  const target = WindropCommerce.navigationTarget(window.location.hash, null);
+  if (target) { profileTarget = target; go('profile'); }
+});
+function updateCommerceSection(section) {
+  if (tab !== 'profile' || initialState !== 'ready') return;
+  const views = { deposit: ['deposit', () => commerce.depositView()], gift: ['withdraw', () => commerce.giftView()], bots: ['personal-bot', () => commerce.botsView()] };
+  const entry = views[section];
+  const el = entry && document.getElementById(entry[0]);
+  if (!el) return;
+  const focused = el.contains(document.activeElement) ? document.activeElement.id : '';
+  el.innerHTML = entry[1]();
+  if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
+}
+function updateProfileBalance() {
+  if (tab !== 'profile' || initialState !== 'ready') return;
+  const gold = $('#profile-gold'), copper = $('#profile-copper');
+  if (gold) gold.textContent = fmt(S.gold);
+  if (copper) copper.textContent = fmt(S.copper);
+}
+async function refreshProfile(force = false) {
+  if (profileRefreshPromise) return force ? profileRefreshPromise.then(() => refreshProfile(true)) : profileRefreshPromise;
+  if (!force && Date.now() - profileLastRefresh < 30000) return;
+  profileRefreshPromise = Promise.all([refreshDaily(), refreshRefs(), refreshHist(), refreshWallet().catch(() => {})]).then(() => {
+    // Асинхронный ответ профиля не перерисовывает игру и не затирает введённые суммы/котировку.
+    if (tab !== 'profile' || initialState !== 'ready') return;
+    updateProfileBalance();
+    const fragment = document.createElement('div'); fragment.innerHTML = vProfile();
+    for (const id of ['profile-daily', 'profile-referrals', 'profile-history']) {
+      const current = document.getElementById(id), updated = fragment.querySelector('#' + id);
+      if (current && updated) current.innerHTML = updated.innerHTML;
+    }
+  }).finally(() => { profileLastRefresh = Date.now(); profileRefreshPromise = null; });
+  return profileRefreshPromise;
 }
 
 /* ---------- cases ---------- */
@@ -206,7 +254,7 @@ function vCases() {
  <div class="seg" role="tablist">${[['gold', 'Por Ouro'], ['freebet', 'Por Cobre']].map(([k, l]) => `<button role="tab" aria-selected="${cat === k}" data-cat="${k}" class="${cat === k ? 'on' : ''}">${l}</button>`).join('')}</div>
  <div class="cases">${list.map((c, n) => {
     const loot = c.rewards.filter(i => i.image).slice(0, 3);
-    return `<button class="case" data-case="${c.id}" style="--i:${n}"><span class="case-no">${String(n + 1).padStart(2, '0')}</span><span class="case-img">${img(c.cover, c.name)}</span><b>${esc(c.name)}</b><span class="price ${c.currency === 'freebets' ? 'copper' : ''}">${money(c.price, c.currency)}</span>${loot.length ? `<span class="case-loot">${loot.map(i => `<img src="${esc(i.image)}" alt="${esc(i.name)}" loading="lazy">`).join('')}</span>` : ''}</button>`;
+    return `<button class="case" data-case="${c.id}" style="--i:${n}"><span class="case-no">${String(n + 1).padStart(2, '0')}</span><span class="case-img">${img(c.cover, c.name)}</span><b>${esc(c.name)}</b><span class="price ${c.currency === 'freebets' ? 'copper' : ''}">${money(c.price, c.currency)}</span>${loot.length ? `<span class="case-loot">${loot.map(i => `<img src="${esc(i.image)}" alt="${esc(i.name)}" decoding="async" loading="lazy">`).join('')}</span>` : ''}</button>`;
   }).join('') || '<p class="hint">Nenhuma caixa ainda.</p>'}</div>`;
 }
 const itemCard = (i, extra = '') => {
@@ -544,7 +592,6 @@ async function coposPick(k) {
 /* foguete (crash): живой полёт, кэшаут в любой момент, взрыв по точке сервера */
 const AUTOS = [0, 1.5, 2, 3, 5];
 let rk = { phase: 'idle', m: 1, crash: 1, t0: 0, stake: 0, auto: 0, sid: 0, pp: 0 };
-const crashPointDemo = () => Math.min(1000, Math.max(1, Math.floor(RTP / (1 - Math.random()) * 100) / 100));
 const rkPos = p => `left:${(8 + p * 70).toFixed(2)}%;bottom:${(12 + 52 * Math.pow(p, 1.6)).toFixed(2)}%`;
 const heat = m => m >= 10 ? 3 : m >= 3 ? 2 : m >= 1.5 ? 1 : 0;
 const trailD = (p, fill) => { let d = ''; for (let i = 0; i <= 24; i++) { const q = p * i / 24; d += (i ? 'L' : 'M') + (8 + q * 70 + 3).toFixed(2) + ' ' + (100 - (12 + 52 * Math.pow(q, 1.6)) - 3).toFixed(2) + ' ' } return fill ? d + `L${(8 + p * 70 + 3).toFixed(2)} 100 L11 100 Z` : d };
@@ -632,6 +679,9 @@ const REASON_PT = {
   daily_claim: 'Check-in diário',
   daily_bonus: 'Check-in diário',
   welcome_bonus: 'Bônus de boas-vindas',
+  welcome_freebet: 'Bônus de boas-vindas em cobre',
+  giftcard_redemption: 'Troca por gift card',
+  sandbox_preview: 'Atualização de saldo',
   deposit: 'Depósito',
   deposit_credit: 'Depósito confirmado',
   referral_bonus: 'Bônus de amigo',
@@ -642,28 +692,15 @@ function vProfile() {
   const done = DAILY.claimed_dates || [];
   const today = new Date().toISOString().slice(0, 10);
   const can = !!DAILY.can_claim;
-  const link = REFS.link || '…';
+  const link = WindropCommerce.safeReferralLink(REFS.link) || '';
   const when = t => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   return `<h1 class="title">Perfil</h1>
- <section class="card"><h2>Saldo</h2><div class="bal-grid"><div class="b gold">${coin('gold')}<span><b>${fmt(S.gold)}</b><small>Ouro: caixas, jogos, aprimoramentos</small></span></div><div class="b copper">${coin('copper')}<span><b>${fmt(S.copper)}</b><small>Cobre: caixas de freebet</small></span></div></div>
+ <section class="card"><h2>Saldo</h2><div class="bal-grid"><div class="b gold">${coin('gold')}<span><b id="profile-gold">${fmt(S.gold)}</b><small>Ouro: caixas, jogos, aprimoramentos</small></span></div><div class="b copper">${coin('copper')}<span><b id="profile-copper">${fmt(S.copper)}</b><small>Cobre: caixas de freebet</small></span></div></div>
  <p class="note">Ouro vem de depósitos, dos mini-jogos e dos itens vendidos. Cobre — do check-in diário.</p></section>
- <section class="card"><div class="card-head"><h2>Depositar</h2><span class="pill">100 🪙 ≈ ${brl(1.5)}</span></div>
- <div class="chip-row" id="deposit-methods"></div>
- <div class="controls"><label>Valor 🪙 <input id="dep-amount" type="number" value="100" min="100" step="100" inputmode="numeric" /></label></div>
- <div class="row"><button class="chip" data-dep="100">+100</button><button class="chip" data-dep="500">+500</button><button class="chip" data-dep="1000">+1000</button><button class="chip" data-dep="5000">+5000</button></div>
- <button class="cta" data-docreate>Depositar</button>
- <div id="dep-status" class="toast"></div><div id="qr"></div></section>
- <section class="card"><div class="card-head"><h2>Sacar</h2><span class="pill">mín. 1.000 🪙</span></div>
- <div class="controls">
-  <label>Cartão <select id="wd-card" onchange="window.updateWdPreview()">
-   <option value="1000">${brl(15)} — 1.000 🪙</option><option value="2500">${brl(37.5)} — 2.500 🪙</option>
-   <option value="5000">${brl(75)} — 5.000 🪙</option><option value="10000">${brl(150)} — 10.000 🪙</option></select></label>
-  <label>Qtd. <input id="wd-count" type="number" value="1" min="1" oninput="window.updateWdPreview()" /></label>
- </div>
- <div id="wd-preview" class="limits"></div>
- <button class="cta" data-wdcreate>Sacar</button>
- <div id="wd-result" class="toast"></div><div id="wd-status" class="toast"></div></section>
- <section class="card"><div class="card-head"><h2>Check-in diário</h2><span class="pill">Série: ${DAILY.streak || 0} ${plural(DAILY.streak || 0, 'dia', 'dias', 'dias')}</span></div>
+ <section class="card commerce-form" id="deposit">${commerce.depositView()}</section>
+ <section class="card commerce-form" id="withdraw">${commerce.giftView()}</section>
+ <section class="card commerce-form" id="personal-bot">${commerce.botsView()}</section>
+ <section class="card" id="profile-daily"><div class="card-head"><h2>Check-in diário</h2><span class="pill">Série: ${DAILY.streak || 0} ${plural(DAILY.streak || 0, 'dia', 'dias', 'dias')}</span></div>
  <div class="days">${Array.from({ length: 7 }, (_, k) => {
     const date = new Date(Date.now() - (6 - k) * 864e5).toISOString().slice(0, 10);
     const got = done.includes(date);
@@ -671,114 +708,33 @@ function vProfile() {
   }).join('')}</div>
  <p class="hint">Todo dia: +500 🥉. 7 dias seguidos liberam a Caixa Semanal, 30 dias — a Mensal. Pular um dia zera a série.</p>
  <button class="cta" data-claim ${can ? '' : 'disabled'}>${can ? 'Check-in' : 'Já fez hoje — volte amanhã'}</button></section>
- <section class="card"><div class="card-head"><h2>Amigos</h2><span class="pill">${REFS.invited || 0} ${plural(REFS.invited || 0, 'amigo', 'amigos', 'amigos')}</span></div>
- <p class="hint">Bônus quando o amigo depositar pelo seu link.</p>
- <div class="ref"><input id="reflink" value="${esc(link)}" readonly aria-label="Link de convite"><button class="icon-btn" data-copy aria-label="Copiar">${icon('copy')}</button></div>
- <div class="row"><button class="ghost" data-share>Convidar</button></div>
+ <section class="card" id="profile-referrals"><div class="card-head"><h2>Amigos</h2><span class="pill">${REFS.invited || 0} ${plural(REFS.invited || 0, 'amigo', 'amigos', 'amigos')}</span></div>
+ <p class="hint">${link ? 'Bônus quando o amigo depositar pelo seu link.' : 'Link de convite indisponível no momento. Tente novamente mais tarde.'}</p>
+ <div class="ref"><input id="reflink" value="${esc(link)}" placeholder="${link ? '' : 'Link de convite indisponível'}" readonly aria-label="Link de convite"><button class="icon-btn" data-copy aria-label="Copiar" ${link ? '' : 'disabled'}>${icon('copy')}</button></div>
+ <div class="row"><button class="ghost" data-share ${link ? '' : 'disabled'}>Convidar</button></div>
  <div class="ref-stats"><div class="ref-stat"><span>${REFS.invited || 0}</span><small>convidados</small></div><div class="ref-stat"><span>${REFS.confirmed || 0}</span><small>confirmados</small></div></div></section>
- <section class="card"><h2>Histórico</h2>${HIST.length ? `<ul class="list hist">${HIST.slice(0, 25).map(h => h.kind === 'item'
+ <section class="card" id="profile-history"><h2>Histórico</h2>${HIST.length ? `<ul class="list hist">${HIST.slice(0, 25).map(h => h.kind === 'item'
     ? `<li><span><b>${esc(h.text)}</b><small>${when(h.t)}</small></span><em class="it">item</em></li>`
     : `<li><span><b>${esc(reasonText(h.text))}</b><small>${when(h.t)}</small></span><em class="${h.delta < 0 ? 'neg' : 'pos'}">${h.delta > 0 ? '+' : ''}${fmt(h.delta)} ${cur(h.currency)}</em></li>`).join('')}</ul>` : '<p class="hint">Ainda vazio.</p>'}</section>`;
 }
-window.updateWdPreview = function () {
-  const el = document.getElementById('wd-preview'); if (!el) return;
-  const nominal = parseInt(document.getElementById('wd-card').value, 10) || 1000;
-  const count = Math.max(1, parseInt(document.getElementById('wd-count').value, 10) || 1);
-  const total = nominal * count, gross = total * 0.015;
-  el.innerHTML = `Saque: <b>${total} 🪙</b> = <b>${brl(gross)}</b>`;
-};
 async function claimDaily() {
   if (!DAILY.can_claim) return;
   try {
     const r = await api('/rewards/daily/claim', { method: 'POST' });
     toast(`+${fmt(r.amount || 500)} cobre${r.streak ? ` · série ${r.streak}` : ''}`);
-    await refreshDaily(); await refreshWallet(); render();
+    await refreshProfile(true);
   } catch (e) { toast('Erro: ' + e.message) }
-}
-/* депозиты */
-let depMethod = null;
-async function loadDepositMethods() {
-  const box = document.getElementById('deposit-methods');
-  if (!box) return;
-  let methods = ['card', 'crypto'];
-  try {
-    const geos = await api('/meta/geos');
-    const list = Array.isArray(geos) ? geos : [geos];
-    const seen = new Set();
-    list.forEach(g => (g.methods || []).forEach(m => seen.add(m)));
-    if (seen.size) methods = [...seen];
-  } catch (e) {}
-  const NAMES = { card: '💳 Cartão / PIX', crypto: '🪙 Cripto (USDT)' };
-  box.innerHTML = methods.map(m => `<button class="chip dep-method${m === depMethod ? ' on' : ''}" data-depmethod="${m}">${NAMES[m] || m}</button>`).join('');
-  if (!depMethod || !methods.includes(depMethod)) depMethod = methods[0];
-}
-async function createDeposit() {
-  const statusEl = document.getElementById('dep-status');
-  const amount = parseFloat(document.getElementById('dep-amount').value) || 100;
-  if (!depMethod) { if (statusEl) statusEl.textContent = 'Escolha a forma de pagamento'; return }
-  if (statusEl) statusEl.textContent = 'Criando pagamento…';
-  try {
-    const res = await api('/deposits', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rail: depMethod, amount_minor: Math.round(amount * 100), currency: 'units' }),
-    });
-    const p = res.client_payload || {};
-    const grossCoins = (res.amount_gross_minor || 0) / 100;
-    if (statusEl) statusEl.textContent = `Depósito: ${amount} 🪙 • pagamento ${brl(grossCoins * 0.015)}`;
-    const qr = document.getElementById('qr');
-    if (qr) qr.innerHTML = p.payment_url ? `<a class="cta wide" href="${esc(p.payment_url)}" target="_blank" rel="noopener">Abrir pagamento ↗</a>` : '';
-    // поллинг статуса
-    const poll = setInterval(async () => {
-      try {
-        const st = await api(`/deposits/${res.intent_id}`);
-        if (st.status === 'succeeded') {
-          clearInterval(poll);
-          if (statusEl) statusEl.textContent = 'Depósito confirmado!';
-          toast('Depósito confirmado!');
-          await refreshWallet(); render();
-        } else if (st.status === 'failed') { clearInterval(poll); if (statusEl) statusEl.textContent = 'Pagamento falhou' }
-      } catch (e) { clearInterval(poll) }
-    }, 3000);
-    gameTimers.push(poll);
-  } catch (e) { if (statusEl) statusEl.textContent = 'Erro: ' + e.message }
-}
-/* выводы */
-async function createWithdraw() {
-  const el = document.getElementById('wd-result');
-  const nominal = parseInt(document.getElementById('wd-card').value, 10) || 1000;
-  const count = Math.max(1, parseInt(document.getElementById('wd-count').value, 10) || 1);
-  const total = nominal * count;
-  const region = 'BR'; // вывод только в Бразилию
-  if (total < 1000) { if (el) el.textContent = 'Saque mínimo — 1 000 🪙'; return }
-  if (S.gold < total) { if (el) el.textContent = 'Ouro insuficiente'; return }
-  try {
-    const r = await api('/withdrawals', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: total, region }),
-    });
-    if (el) el.textContent = 'Solicitação criada, em análise';
-    setBal(S.gold - total, S.copper);
-    const pid = r.id || r.withdrawal_id;
-    if (pid) {
-      const poll = setInterval(async () => {
-        try {
-          const st = await api(`/withdrawals/${pid}/status`);
-          const se = document.getElementById('wd-status');
-          if (se) se.textContent = st.status;
-          if (['completed', 'rejected', 'failed'].includes(st.status)) clearInterval(poll);
-        } catch (e) { clearInterval(poll) }
-      }, 3000);
-      gameTimers.push(poll);
-    }
-    refreshWallet();
-  } catch (e) { if (el) el.textContent = 'Erro: ' + e.message }
 }
 
 /* ---------- events ---------- */
 document.addEventListener('click', e => {
-  const b = e.target.closest('button'); if (!b) return;
+  if (e.target.closest('a[data-payment-link]')) { if (!commerce.allowPaymentLink()) e.preventDefault(); return; }
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
   const d = b.dataset;
+  if (d.initretry !== undefined) return initialize(true);
   if (d.tab) return go(d.tab);
+  if (initialState !== 'ready') return;
+  if (commerce.handleClick(d)) return;
   if (d.back !== undefined) return go(tab);
   if (d.cat) { cat = d.cat; return render() }
   if (d.case) return go('cases', d.case);
@@ -808,28 +764,49 @@ document.addEventListener('click', e => {
   if (d.rcash !== undefined) return rocketCash();
   if (d.auto !== undefined) { rk.auto = L.auto = Number(d.auto); savePrefs(); return render() }
   if (d.claim !== undefined) return claimDaily();
-  if (d.dep !== undefined) { const el = document.getElementById('dep-amount'); if (el) el.value = String(d.dep); return }
-  if (d.depmethod !== undefined) { depMethod = d.depmethod; return loadDepositMethods() }
-  if (d.docreate !== undefined) return createDeposit();
-  if (d.wdcreate !== undefined) return createWithdraw();
   if (d.copy !== undefined || d.share !== undefined) {
-    const v = $('#reflink').value;
+    const v = WindropCommerce.safeReferralLink(REFS.link);
+    if (!v) { toast('Link de convite indisponível no momento.'); return; }
+    const input = $('#reflink');
+    if (input) input.value = v;
     if (d.share !== undefined && navigator.share) { navigator.share({ title: 'WINDROP', url: v }).catch(() => {}); return }
-    (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => toast('Link copiado')).catch(() => { $('#reflink').select(); toast('Selecione e copie o link') });
+    (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(() => toast('Link copiado')).catch(() => {
+      const current = $('#reflink');
+      if (current && WindropCommerce.safeReferralLink(REFS.link) === v) { current.value = v; current.select(); toast('Selecione e copie o link'); }
+    });
     return;
   }
 });
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal() });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal() });
-document.addEventListener('visibilitychange', () => { if (document.hidden) { savePrefs(); stopGames() } });
+document.addEventListener('input', e => { if (e.target.id === 'dep-amount') commerce.setAmount(e.target.value); });
+document.addEventListener('change', e => { if (e.target.id === 'wd-card') commerce.setSku(e.target.value); });
+document.addEventListener('visibilitychange', () => {
+  commerce.visibilityChanged();
+  renderBal();
+  if (document.hidden) { savePrefs(); stopGames(); }
+});
+window.addEventListener('pagehide', () => commerce.dispose());
+window.addEventListener('pageshow', e => { if (e.persisted) window.location.reload(); });
 
 /* ---------- init ---------- */
-(async () => {
-  renderBal();
-  render();
-  try { await refreshWallet() } catch (e) { toast('Não foi possível entrar: ' + e.message) }
-  applyBrand(); loadDepositMethods();
-  await loadCatalog();
-  render();
-  refreshInv(); refreshDaily(); refreshRefs(); refreshHist();
-})();
+function initialize(retry = false) {
+  if (initialPromise) return initialPromise;
+  initialState = 'loading'; initialError = ''; renderBal(); render();
+  initialPromise = (async () => {
+    let authenticated = false;
+    try {
+      if (retry) await apiClient.retryAuthentication(); else await apiClient.authenticate();
+      authenticated = true;
+      await Promise.all([refreshWallet(), loadCatalog()]);
+      initialState = 'ready'; render(); scrollProfileTarget();
+      // Профильные необязательные запросы не блокируют первый экран кейсов.
+      void Promise.allSettled([refreshInv(), refreshDaily(), refreshRefs(), refreshHist(), applyBrand()]);
+    } catch (error) {
+      initialState = 'error'; initialAuthError = !authenticated || error.status === 401;
+      initialError = WindropApi.errorMessage(error); render();
+    } finally { initialPromise = null; }
+  })();
+  return initialPromise;
+}
+void initialize();
