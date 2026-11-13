@@ -25,10 +25,14 @@
       ]
     }
   ],
-  "rewrites": [
-    { "source": "/app", "destination": "/frontend/index.html" },
-    { "source": "/app/(.*)", "destination": "/frontend/$1" },
-    { "source": "/", "destination": "/landing/index.html" },
-    { "source": "/(.*)", "destination": "/landing/$1" }
+  "routes": [
+    { "src": "/", "dest": "/landing/index.html" },
+    { "src": "/app", "dest": "/frontend/index.html" },
+    { "src": "/app/", "dest": "/frontend/index.html" },
+    { "src": "/app/(.*)", "dest": "/frontend/$1" },
+    { "src": "/(.*)", "dest": "/landing/$1" }
+  ],
+  "crons": [
+    { "path": "/api/cron/auto_pause", "schedule": "*/10 * * * *" }
   ]
 }
