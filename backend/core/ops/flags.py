@@ -1,19 +1,16 @@
 import json
-import os
-
-import redis.asyncio as redis
 
 from core.ops.exceptions import ServiceDisabled
+from core.ops.redis_client import get_redis
 
 CACHE_TTL = 5
 
 
 async def get_flag(conn, key: str, default: bool = True) -> bool:
-    r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    r = await get_redis()
     cached = await r.get(f"flag:{key}")
     if cached is not None:
-        await r.aclose()
-        return cached.decode() == "1"
+        return cached == "1"
     row = await (
         await conn.execute("SELECT value FROM system_config WHERE key = %s", (key,))
     ).fetchone()
@@ -21,8 +18,7 @@ async def get_flag(conn, key: str, default: bool = True) -> bool:
     if row:
         v = row["value"]
         val = bool(v.get("value", v.get("enabled", default))) if isinstance(v, dict) else bool(v)
-    await r.setex(f"flag:{key}", CACHE_TTL, "1" if val else "0")
-    await r.aclose()
+    await r.set(f"flag:{key}", "1" if val else "0", ex=CACHE_TTL)
     return val
 
 
@@ -33,9 +29,8 @@ async def set_flag(conn, key: str, value: bool, who: str = "admin"):
         (key, json.dumps({"value": value})),
     )
     try:
-        r = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        r = await get_redis()
         await r.delete(f"flag:{key}")
-        await r.aclose()
     except Exception:
         pass
     await conn.execute(

@@ -108,11 +108,35 @@ test("copos_levels_flow", async ({ page }) => {
   await page.click('[data-tab="games"]');
   await page.click('[data-game="copos"]');
   await page.click("[data-tplay]");
-  // шарик показан под первым стаканчиком
+  // шарик показан под первым стаканчиком; fullscreen flash не используется в Copos
   await expect(page.locator('.cup[data-cup="0"].up')).toBeVisible();
+  await expect(page.locator('.cup.fwd, .cup.bwd')).toHaveCount(0);
+  await expect(page.locator('.flash')).toHaveCount(0);
   // после перемешивания кликаем по шару (ball=0)
   await page.click('.cup[data-cup="0"]', { timeout: 15000 });
   await expect(page.locator("p.hint")).toContainText("Acertou");
+  await expect(page.locator('.flash')).toHaveCount(0);
+});
+
+test("foguete_uses_server_crash_point_and_single_cashout", async ({ page }) => {
+  await mockBase(page);
+  await page.route("**/cases", route => route.fulfill({ json: [] }));
+  let cashouts = 0;
+  await page.route("**/games/crash/start", route => route.fulfill({ json: {
+    session_id: 44, crash_point: 10, t0_ms: Date.now(), growth: 0.12,
+  } }));
+  await page.route("**/games/crash/cash*", route => {
+    cashouts += 1;
+    return route.fulfill({ json: { win: true, m: 2, crash: 10, payout: 200 } });
+  });
+  await page.goto("/");
+  await page.click('[data-tab="games"]');
+  await page.click('[data-game="foguete"]');
+  await page.click('[data-rplay]');
+  await expect(page.locator("#rmul")).toContainText("x1");
+  await page.click("#rcash");
+  await expect(page.locator(".rk-state")).toContainText("chegou até x10");
+  expect(cashouts).toBe(1);
 });
 
 test("profile_daily_deposit_withdraw", async ({ page }) => {

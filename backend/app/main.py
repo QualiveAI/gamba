@@ -67,8 +67,24 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="roblox-case-platform", lifespan=lifespan)
 
-# Регистрация плагинов не запускает polling, scheduler или Telegram worker.
+# Регистрация плагинов не запускает polling, scheduler или очередь Telegram.
 discover_plugins()
+
+# CORS включается только при явном allowlist: same-origin deployment за Caddy
+# не должен получать лишние заголовки и preflight-путь. Telegram webhook приходит
+# без Origin и секретным заголовком, поэтому прокси-схема его не касается.
+if settings.cors_origins:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        # JWT передаётся в Authorization, не в cookie: credentials выключены.
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        max_age=600,
+    )
 
 app.include_router(auth_router)
 app.include_router(bot_webhooks_router)

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>WINDROP — Predictor Anti-Pattern Preview</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="warning">
+      <span class="badge">LOCAL PREVIEW</span>
+      <div>
+        <h1>Predictor Anti-Pattern</h1>
+        <p>Изолированная визуальная симуляция. Не подключено к WINDROP, играм, ставкам или кошельку.</p>
+      </div>
+    </header>
+
+    <section class="hero">
+      <p class="eyebrow">ПРОВЕРКА ИДЕИ ДО РЕАЛИЗАЦИИ</p>
+      <h2>Так выглядит логика,<br><strong>которую нельзя продавать</strong></h2>
+      <p>В режиме «Манипулируемый» качество сигнала искусственно зависит от размера ставки: на маленьких ставках он чаще угадывает, на больших — чаще ошибается. Это сделано только для демонстрации анти-паттерна.</p>
+      <div class="callout">Если сервис меняет качество подсказки из-за ставки, это скрытая манипуляция, а не честный предсказатель.</div>
+    </section>
+
+    <section class="controls" aria-labelledby="controls-title">
+      <div class="section-title"><p class="eyebrow">01 / НАСТРОЙКИ</p><h2 id="controls-title">Посмотри разницу</h2></div>
+      <div class="control-grid">
+        <label>Игра<select id="game"><option value="mines">Minas</option><option value="crash">Crash / Foguete</option><option value="cups">Copos</option></select></label>
+        <label>Режим<select id="mode"><option value="biased">Манипулируемый анти-паттерн</option><option value="fair">Честный baseline</option></select></label>
+        <label>Раунды<input id="rounds" type="number" min="10" max="10000" step="10" value="500"></label>
+        <label>Seed<input id="seed" value="windrop-preview-1" maxlength="64"></label>
+      </div>
+      <button class="primary" id="run">Запустить локальную симуляцию</button>
+    </section>
+
+    <section class="result" aria-live="polite" aria-labelledby="result-title">
+      <div class="result-head"><div><p class="eyebrow">02 / РЕЗУЛЬТАТ</p><h2 id="result-title">Готово к запуску</h2></div><span class="mode-pill" id="mode-pill">ANTI-PATTERN</span></div>
+      <div class="metrics" id="metrics"></div>
+      <div class="chart-wrap"><svg id="chart" viewBox="0 0 800 220" role="img" aria-label="Сравнение качества сигнала по размеру ставки"></svg></div>
+      <div class="table-wrap"><table><thead><tr><th>Ставка</th><th>Качество сигнала</th><th>Ошибки</th><th>Потери из-за совета</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <p class="result-note" id="result-note">Синтетические раунды не повторяют реальные игры и не дают прогноза следующего исхода.</p>
+    </section>
+
+    <section class="games" aria-labelledby="games-title">
+      <div class="section-title"><p class="eyebrow">03 / ЧТО ИМЕННО ПОКАЗЫВАЕТСЯ</p><h2 id="games-title">Три визуальных сценария</h2></div>
+      <div class="game-grid">
+        <article><h3>Minas</h3><p>Синтетическая рекомендация безопасной клетки. В live-игре страница не получает расположение мин.</p></article>
+        <article><h3>Crash / Foguete</h3><p>Синтетическая история crash points и квантилей. Она не знает и не предсказывает следующий раунд.</p></article>
+        <article><h3>Copos</h3><p>Синтетический replay положения шарика. Настоящая server session сюда не передаётся.</p></article>
+      </div>
+    </section>
+
+    <footer>
+      <strong>LOCAL ONLY · НЕ ДЛЯ ПРОДАЖИ</strong>
+      <span>18+ · Нет платежей · Нет Telegram · Нет live outcome</span>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

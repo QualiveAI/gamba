@@ -1,0 +1,165 @@
+name: Restore drill (backup verification)
+
+# Дамп без проверки восстановления не является резервной копией. Drill каждую
+# неделю скачивает latest dump из R2, расшифровывает его и восстанавливает во
+# временную БД внутри runner, затем проверяет инварианты ledger/схемы.
+# Никогда не пишет в production БД и не читает DATABASE_URL_PROD.
+#
+# GitHub Secrets: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+#                 R2_BUCKET, AGE_PRIVATE_KEY
+# GitHub Variables: AGE_RECIPIENT_PUBLIC (не нужен здесь; приватный ключ берётся
+#                   из secrets — именно он доказывает, что пара ключей цела)
+
+on:
+  schedule:
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres_test:
+        image: postgres:16
+        env:
+          POSTGRES_USER: drill_admin
+          POSTGRES_PASSWORD: drill-bootstrap-only
+          POSTGRES_DB: postgres
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      DUMP: /tmp/windrop-latest.dump
+      ENC: /tmp/windrop-latest.dump.age
+      DRILL_DB: postgresql://drill_admin:drill-bootstrap-only@127.0.0.1:55432/windrop_drill
+    steps:
+      - name: Prepare tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client age
+          curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.deb -o rclone.deb
+          sudo dpkg -i rclone.deb
+          pg_restore --version; age --version; rclone version
+
+      - name: Download latest dump from R2
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          rclone copyto "R2:${{ secrets.R2_BUCKET }}/backups/windrop-latest.dump.age" "$ENC" \
+            --s3-no-check-bucket --retries 3 --timeout 2m
+          test -s "$ENC"
+          echo "encrypted_bytes=$(stat -c%s "$ENC")" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Decrypt
+        env:
+          AGE_PRIVATE_KEY: ${{ secrets.AGE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$AGE_PRIVATE_KEY" > /tmp/age.key
+          if ! age --decrypt -i /tmp/age.key "$ENC" > "$DUMP" 2>/dev/null; then
+            rm -f /tmp/age.key "$DUMP"
+            echo "Расшифровка невозможна: AGE_PRIVATE_KEY не соответствует recipient"
+            exit 1
+          fi
+          rm -f /tmp/age.key
+          test -s "$DUMP"
+          file "$DUMP" | grep -qi 'PGDUMP\|data' || true
+
+      - name: Create drill database
+        env:
+          PGPASSWORD: drill-bootstrap-only
+        run: |
+          psql --host=127.0.0.1 --port=55432 --username=drill_admin \
+            --dbname=postgres --no-psqlrc --set=ON_ERROR_STOP=1 \
+            -c "CREATE DATABASE windrop_drill"
+
+      - name: Restore into temporary database
+        env:
+          PGCONNECT_TIMEOUT: "15"
+        run: |
+          set -euo pipefail
+          # Дамп сделан --no-owner --no-privileges; восстановление в чистую БД.
+          pg_restore --dbname="$DRILL_DB" --no-owner --no-privileges \
+            --exit-on-error --verbose "$DUMP" 2>/tmp/restore.log || {
+              tail -40 /tmp/restore.log
+              echo "pg_restore завершился ошибкой"; exit 1
+            }
+
+      - name: Verify ledger invariant and schema
+        env:
+          PGCONNECT_TIMEOUT: "15"
+        run: |
+          set -euo pipefail
+          psql --no-psqlrc --set=ON_ERROR_STOP=1 "$DRILL_DB" <<'SQL'
+          \pset footer off
+          -- Инвариант reconcile(): баланс = сумма ledger по каждой валюте.
+          WITH sums AS (
+            SELECT user_id,
+                   COALESCE(SUM(delta) FILTER (WHERE currency='units'),0) AS su,
+                   COALESCE(SUM(delta) FILTER (WHERE currency='freebets'),0) AS sf
+            FROM ledger_entries GROUP BY user_id
+          )
+          SELECT count(*) AS broken_ledger
+          FROM users u
+          LEFT JOIN sums s ON s.user_id = u.id
+          WHERE COALESCE(s.su,0) != u.balance_units
+             OR COALESCE(s.sf,0) != u.balance_freebets;
+
+          SELECT count(*) AS migrations_rows FROM schema_migrations;
+          SELECT count(*) AS has_expected_migration
+          FROM schema_migrations WHERE filename = '0018_giftcard_redemption.sql';
+          SELECT count(*) AS users FROM users;
+          SELECT count(*) AS ledger FROM ledger_entries;
+          SELECT count(*) AS bot_registry FROM bot_registry;
+          SELECT count(*) AS inbox FROM bot_inbox;
+          SELECT count(*) AS outbox FROM bot_outbox;
+          SQL
+
+      - name: Fail loudly on broken invariant
+        env:
+          PGCONNECT_TIMEOUT: "15"
+        run: |
+          set -euo pipefail
+          BROKEN=$(psql --no-psqlrc -tA "$DRILL_DB" -c "
+            WITH sums AS (
+              SELECT user_id,
+                     COALESCE(SUM(delta) FILTER (WHERE currency='units'),0) AS su,
+                     COALESCE(SUM(delta) FILTER (WHERE currency='freebets'),0) AS sf
+              FROM ledger_entries GROUP BY user_id
+            )
+            SELECT count(*) FROM users u
+            LEFT JOIN sums s ON s.user_id = u.id
+            WHERE COALESCE(s.su,0) != u.balance_units
+               OR COALESCE(s.sf,0) != u.balance_freebets;")
+          MIG=$(psql --no-psqlrc -tA "$DRILL_DB" -c "
+            SELECT count(*) FROM schema_migrations
+            WHERE filename='0018_giftcard_redemption.sql';")
+          echo "broken_ledger=$BROKEN expected_migration=$MIG" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BROKEN" != "0" ]; then
+            echo "Инвариант ledger нарушен в восстановленной копии: $BROKEN пользователей"; exit 1
+          fi
+          if [ "$MIG" != "1" ]; then
+            echo "Ожидаемая миграция 0018 отсутствует в дампе"; exit 1
+          fi
+          echo "Restore drill: дамп восстанавливается и инварианты целы" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scrub runner copies
+        if: always()
+        run: rm -f "$DUMP" "$ENC" /tmp/restore.log /tmp/age.key || true

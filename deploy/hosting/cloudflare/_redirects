@@ -1,0 +1,4 @@
+/app /app/index.html 200
+/app/* /app/:splat 200
+/ /landing/index.html 200
+/* /landing/:splat 200

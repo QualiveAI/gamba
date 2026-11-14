@@ -1,0 +1,79 @@
+# Инфраструктура WINDROP как код для Render.
+# Секретов здесь нет: sync: false означает ручной ввод в dashboard после деплоя,
+# generateValue создаёт случайное значение сам Render и показывает его один раз.
+# Fernet-ключ сгенерировать externally нельзя (нужен валидный base64 32 байта),
+# поэтому он тоже sync: false.
+
+databases:
+  - name: windrop-db
+    databaseName: windrop
+    plan: free
+    # Free-план удаляется по истечению retention: nightly dump в R2 обязателен.
+
+services:
+  # Один сервис держит API + bot worker + scheduler: Render free даёт ~750 ч/мес
+  # на аккаунт, отдельные worker/scheduler удвоили бы потребление и ввели sleep.
+  - type: web
+    name: windrop-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    repo:
+      type: git
+      url: https://github.com/QualiveAI/gamba.git
+      branch: main
+    dockerfilePath: ./infra/Dockerfile.backend
+    dockerBuildContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: prod
+      - key: BOT_MODE
+        value: webhook
+      - key: MANAGED_BOTS_ENABLED
+        value: "true"
+      - key: ALLOW_GUEST_AUTH
+        value: "false"
+      - key: PAYMENTS_MODE
+        value: disabled
+      - key: PAYMENT_WEB_ENABLED
+        value: "false"
+      - key: GIFTCARD_MODE
+        value: disabled
+      - key: GIFTCARD_REDEMPTION_ENABLED
+        value: "false"
+      - key: MEDIA_STORAGE_MODE
+        value: local
+      # Free-лимиты соединений: API 3 + worker 3 + scheduler 1.
+      - key: DB_POOL_MIN_SIZE
+        value: "0"
+      - key: DB_POOL_MAX_SIZE
+        value: "3"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: windrop-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false # external Redis (Upstash), rediss:// URL
+      - key: BOT_TOKEN
+        sync: false # только после revoke в @BotFather
+      - key: BOT_USERNAME
+        value: robwindropbot
+      - key: ADMIN_TELEGRAM_IDS
+        sync: false
+      - key: PUBLIC_BASE_URL
+        fromService:
+          type: web
+          name: windrop-api
+          property: baseUrl
+      - key: WEBAPP_URL
+        sync: false # https://<vercel-domain>/app/
+      - key: CORS_ALLOW_ORIGINS
+        sync: false # https://<vercel-domain> без пути и слэша
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FERNET_KEY
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true

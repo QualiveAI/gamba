@@ -1,7 +1,3 @@
-import os
-
-import redis.asyncio as redis
-
 from .config import allowed_modifiers
 from .modifiers import f_admin, f_bet, f_chase, f_win
 
@@ -28,8 +24,9 @@ class RtpDecision:
 
 
 async def _redis():
-    url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    return redis.from_url(url)
+    from core.ops.redis_client import get_redis
+
+    return await get_redis()
 
 
 async def effective_rtp(
@@ -93,7 +90,6 @@ async def effective_rtp(
             value *= val
             if val != 1.0:
                 modifiers_applied.append("f_chase")
-        await r.aclose()
 
     # clamp
     value = max(0.80, min(0.95, value))

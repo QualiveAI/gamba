@@ -1,0 +1,17 @@
+[Unit]
+Description=Windrop background scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=windrop
+WorkingDirectory=/opt/roblox-case-platform/backend
+EnvironmentFile=/etc/windrop.env
+ExecStart=/opt/roblox-case-platform/backend/.venv/bin/python -m app.ops.scheduler
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

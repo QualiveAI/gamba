@@ -20,6 +20,7 @@
 !infra/
 !infra/Dockerfile.backend
 !infra/Dockerfile.backend.dockerignore
+!infra/entrypoint.prod.sh
 
 # Секреты и артефакты исключаются и внутри разрешённых директорий.
 **/.env

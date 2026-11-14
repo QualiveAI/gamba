@@ -1,0 +1,115 @@
+name: Backup PostgreSQL to R2
+
+# Render/Neon free не делают управляемых резервных копий и удаляют ресурсы по
+# истечении retention. Дамп берётся в облачном runner (не с ПК оператора) и
+# уходит в Cloudflare R2 зашифрованным через age.
+#
+# Требуемые GitHub Secrets:
+#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+#   AGE_PRIVATE_KEY   — приватная часть age-ключевой пары (для restore-drill)
+# Required GitHub Variables:
+#   AGE_RECIPIENT_PUBLIC, DATABASE_URL_PROD
+#
+# infra/backup.sh остаётся путём оператора с pg_service; в CI DSN приходит
+# строкой, поэтому дамп делается inline с той же дисциплиной: plaintext на диск
+# не пишется, ошибка любой стадии даёт exit 1, частичный файл не перезаписывается.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-postgres
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DEST: /tmp/windrop-latest.dump.age
+    steps:
+      - name: Prepare tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client age
+          pg_dump --version
+          age --version
+
+      - name: Validate inputs
+        run: |
+          test -n "${{ vars.DATABASE_URL_PROD }}" || { echo "DATABASE_URL_PROD не задан"; exit 1; }
+          test -n "${{ vars.AGE_RECIPIENT_PUBLIC }}" || { echo "AGE_RECIPIENT_PUBLIC не задан"; exit 1; }
+          test -n "${{ secrets.R2_BUCKET }}" || { echo "R2_BUCKET не задан"; exit 1; }
+
+      - name: Encrypted logical dump
+        env:
+          DATABASE_URL: ${{ vars.DATABASE_URL_PROD }}
+          AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT_PUBLIC }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ -e "$DEST" ] || [ -L "$DEST" ]; then
+            echo "Файл назначения уже существует; отказ перезаписи"; exit 1
+          fi
+          export PGCONNECT_TIMEOUT=15
+          export PGAPPNAME=windrop-ci-backup
+          export PGOPTIONS='-c default_transaction_read_only=on -c lock_timeout=5000'
+          # Plaintext никогда не попадает на диск: pipe сразу в age.
+          if ! pg_dump --dbname="$DATABASE_URL" --no-password \
+              --format=custom --no-owner --no-privileges 2>/dev/null \
+              | age --encrypt --recipient "$AGE_RECIPIENT" > "$DEST" 2>/dev/null; then
+            rm -f "$DEST"
+            echo "Backup не завершён; partial-файл не является резервной копией"; exit 1
+          fi
+          test -s "$DEST"
+          echo "dump_bytes=$(stat -c%s "$DEST")" >> "$GITHUB_STEP_SUMMARY"
+          sha256sum "$DEST" | awk '{print "dump_sha256="$1}' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install rclone
+        run: |
+          curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.deb -o rclone.deb
+          sudo dpkg -i rclone.deb
+          rclone version
+
+      - name: Upload to R2
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          STAMP="$(date -u +%Y-%m-%dT%H%M%SZ)"
+          rclone copyto "$DEST" "R2:${{ secrets.R2_BUCKET }}/backups/windrop-$STAMP.dump.age" \
+            --s3-no-check-bucket --retries 3 --low-level-retries 5 --timeout 2m
+          # Отдельный always-latest объект ускоряет restore-drill.
+          rclone copyto "$DEST" "R2:${{ secrets.R2_BUCKET }}/backups/windrop-latest.dump.age" \
+            --s3-no-check-bucket --retries 3 --low-level-retries 5 --timeout 2m
+          echo "Загружено в r2://${{ secrets.R2_BUCKET }}/backups/" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply 14-day retention
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          # Удаляет только суффиксные дампы старше 14 суток; windrop-latest не
+          # попадает под шаблон и остаётся.
+          rclone delete "R2:${{ secrets.R2_BUCKET }}/backups/" \
+            --s3-no-check-bucket --min-age 14d \
+            --exclude "windrop-latest.dump.age"
+          rclone lsf "R2:${{ secrets.R2_BUCKET }}/backups/" \
+            --s3-no-check-bucket | wc -l | awk '{print "дампов_хранится="$1}' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Scrub runner copy
+        if: always()
+        run: rm -f "$DEST" || true

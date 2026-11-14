@@ -1,0 +1,31 @@
+# Vercel API bundle: keep deployment small and never upload local data/secrets.
+node_modules
+.venv
+.env*
+!.env.example
+backups
+shots
+frontend/node_modules
+frontend/test-results
+frontend/pw-run-*.log
+# В схеме Vercel = только статика; API/worker живут на Render. api/ и backend/
+# исключаются, чтобы Vercel не пытался собрать Python serverless-функции.
+api
+api/**
+backend
+backend/**
+deploy
+deploy/**
+docs
+docs/**
+infra
+infra/**
+# Локальный preview без Telegram не должен попадать в публичный статический слой.
+frontend/preview.html
+frontend/js/local-preview.js
+frontend/js/local-preview-catalog.js
+frontend/tests
+frontend/tests/**
+__pycache__
+*.pyc
+.git

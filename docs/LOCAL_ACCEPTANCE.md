@@ -10,6 +10,7 @@
 - Склад заранее полученных Roblox/BR gift cards: encrypted codes, SKU/номинал отдельно от цены в монетах, атомарное назначение/списание, повторная доставка того же кода, запрет автоматического возврата в склад после начала отправки.
 - Интеграция frontend без замены выбранного визуального языка; отдельный внешний PT-BR лендинг; конфигурации primary/standby, readiness, отдельные scheduler и workers.
 - PT-BR localization layer для 14 кейсов и 210 лут-названий; player API/инвентарь используют локализованные display labels, технические game keys и экономика не меняются.
+- Crash pure distribution checks и mocked Foguete E2E добавлены; server-authoritative timing/cashout flow + owner status reconciliation проверяются, но real-money/game fairness audit остаётся открытым.
 - Asset audit: 10 gold + 4 freebet cases, 210/210 item images и 14/14 covers проходят filesystem/decode проверку; browser preview отдельно подтвердил четыре freebet cards и 16 URL decode с `naturalWidth > 0`. См. `docs/ASSET_AUDIT.md`.
 - Бесплатный backend вариант описан в `docs/FREE_BACKEND_OPTIONS.md`: Vercel static, Oracle Always Free VM как $0-ish always-on candidate, sleeping services только preview, external Postgres/Redis с лимитами.
 - Production UI не показывает технические `DEMO`/`Demonstração`/`sandbox`-подписи; внутренние sandbox guards и test fixtures сохранены.

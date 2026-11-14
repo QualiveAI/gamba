@@ -36,8 +36,12 @@ const getTelegram = () => window.Telegram && window.Telegram.WebApp;
 try { const tg = getTelegram(); if (tg) { tg.ready(); tg.expand(); } } catch (_) {}
 let sessionStore;
 try { sessionStore = window.sessionStorage; } catch (_) {}
-const apiClient = WindropApi.createClient({ origin: window.location.origin, search: window.location.search,
-  getTelegram, storage: sessionStore });
+const localPreview = window.WindropLocalPreview;
+const previewMode = !!(localPreview && localPreview.isEnabled());
+// Раздельная схема static+API требует точного origin; пустое значение = same-origin.
+const apiOrigin = String(window.WINDROP_API_ORIGIN || window.location.origin).replace(/\/+$/, "");
+const apiClient = previewMode ? localPreview.createClient() : WindropApi.createClient({ origin: apiOrigin,
+  search: window.location.search, getTelegram, storage: sessionStore });
 const api = (path, options) => apiClient.request(path, options);
 const commerce = WindropCommerce.createCommerce({ client: apiClient, storage: sessionStore, getTelegram,
   onChange: updateCommerceSection, onWalletChange: async () => {
@@ -54,8 +58,13 @@ let CATALOG = [];
 const CASE = id => CATALOG.find(c => String(c.id) === String(id));
 const LSKEY = 'windrop-prefs-v1';
 let L = { thLv: 0, thStreak: 0, rhist: [], stake: 50, mineCount: 3, auto: 0 };
-try { L = { ...L, ...(JSON.parse(localStorage.getItem(LSKEY)) || {}) }; } catch (e) {}
-const savePrefs = () => { try { localStorage.setItem(LSKEY, JSON.stringify(L)) } catch (e) {} };
+if (!previewMode) {
+  try { L = { ...L, ...(JSON.parse(localStorage.getItem(LSKEY)) || {}) }; } catch (e) {}
+}
+const savePrefs = () => {
+  if (previewMode) return;
+  try { localStorage.setItem(LSKEY, JSON.stringify(L)) } catch (e) {}
+};
 
 function setBal(g, p) {
   const old = { g: S.gold, p: S.copper };
@@ -136,8 +145,8 @@ const fx = {
     d.innerHTML = `<span>${x >= 20 ? 'MEGA VITÓRIA' : 'GRANDE VITÓRIA'}</span><b>x${x.toFixed(2)}</b>`;
     fx.layer().appendChild(d); fx.confetti(d, 100); setTimeout(() => d.remove(), 2300);
   },
-  win(el, w, x) { fx.float(el, '+' + fmt(w), 'good'); fx.coins(el, Math.min(18, 6 + Math.floor(x * 2))); fx.confetti(el, x >= 3 ? 70 : 40); fx.flash('green'); fx.big(x) },
-  lose(el) { fx.shake(el); fx.flash('red') },
+  win(el, w, x, flash = true) { fx.float(el, '+' + fmt(w), 'good'); fx.coins(el, Math.min(18, 6 + Math.floor(x * 2))); fx.confetti(el, x >= 3 ? 70 : 40); if (flash) fx.flash('green'); fx.big(x) },
+  lose(el, flash = true) { fx.shake(el); if (flash) fx.flash('red') },
 };
 
 /* ---------- загрузка данных ---------- */
@@ -147,7 +156,7 @@ async function loadCatalog() {
     id: c.id, name: c.name, price: c.price_units, currency: c.currency || 'units',
     cover: c.cover,
     rewards: (c.rewards || []).map((r, index) => ({
-      rid: r.id, name: r.label || 'Item', tier: r.rarity && TIERS[r.rarity] ? r.rarity : 'common',
+      rid: r.id, targetKey: `${c.id}:${r.id}`, name: r.label || 'Item', tier: r.rarity && TIERS[r.rarity] ? r.rarity : 'common',
       chance: r.chance_pct ?? 0, value: r.nominal_units, image: r.image, caseId: c.id,
       caseCurrency: c.currency || 'units', _order: index,
     })).sort((a, b) => tierRank(b.tier) - tierRank(a.tier) || b.value - a.value || a._order - b._order),
@@ -186,9 +195,14 @@ let tab = 'cases', sub = null, cat = 'gold';
 let profileTarget = WindropCommerce.navigationTarget(window.location.hash, getTelegram()?.initDataUnsafe?.start_param);
 if (profileTarget) tab = 'profile';
 function go(t, s = null) {
+  if (!$('#modal').hidden) closeModal();
   leaveStakeGames(); stopGames(); tab = t; sub = s;
   render();
-  const v = $('#view'); v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); window.scrollTo(0, 0);
+  const v = $('#view');
+  clearTimeout(go.enterTimer);
+  v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
+  go.enterTimer = setTimeout(() => v.classList.remove('enter'), 700);
+  window.scrollTo(0, 0);
   if (tab === 'profile' && initialState === 'ready') { void refreshProfile(); scrollProfileTarget(); }
 }
 function render() {
@@ -350,11 +364,9 @@ const mine = () => INV.filter(i => i.value_coins > 0).map(i => ({
 function catalogTargets(sel) {
   const seen = new Set(), out = [];
   for (const c of CATALOG) for (const i of c.rewards) {
-    if (i.caseCurrency !== 'units') continue;
-    if (i.value <= sel.value) continue;
-    const k = i.name + i.value;
-    if (seen.has(k)) continue;
-    seen.add(k); out.push(i);
+    if (i.caseCurrency !== sel.currency || i.value <= sel.value) continue;
+    if (seen.has(i.targetKey)) continue;
+    seen.add(i.targetKey); out.push(i);
   }
   return out.sort((a, b) => a.value - b.value).slice(0, 30);
 }
@@ -372,7 +384,7 @@ function vUpgrade() {
  <button class="cta" data-upgo ${sel && tgt && !upBusy ? '' : 'disabled'}>Aprimorar</button>
  <h2 class="sec">1. Seu item</h2>
  ${list.length ? `<div class="picks">${list.map(i => pickCard(i, 'data-upsel', i.id, i.id === upSel)).join('')}</div>` : `<div class="empty"><p>A Mochila está vazia. Abra uma caixa para ganhar o primeiro item.</p><button class="ghost" data-tab="cases">Abrir caixa</button></div>`}
- ${sel ? `<h2 class="sec">2. Meta</h2>${(() => { const t = catalogTargets(sel); return t.length ? `<div class="picks">${t.map(i => pickCard(i, 'data-uptgt', i.rid, tgt && tgt.rid === i.rid)).join('')}</div>` : '<div class="empty"><p>Este já é o item mais caro.</p></div>' })()}` : ''}`;
+  ${sel ? `<h2 class="sec">2. Meta</h2>${(() => { const t = catalogTargets(sel); return t.length ? `<div class="picks">${t.map(i => pickCard(i, 'data-uptgt', i.targetKey, tgt && tgt.targetKey === i.targetKey)).join('')}</div>` : '<div class="empty"><p>Este já é o item mais caro.</p></div>' })()}` : ''}`;
 }
 async function doUpgrade() {
   const sel = mine().find(i => i.id === upSel), tgt = upTarget;
@@ -548,13 +560,14 @@ async function coposStart() {
     let left = Lv.swaps, sp = reduced ? Math.min(Lv.sp, 200) : Lv.sp * 1.3;
     const step = () => {
       if (thim.phase !== 'shuffle') return;
-      const a = rint(Lv.n); let b = rint(Lv.n - 1); if (b >= a) b++;
+      const n = thim.n;
+      const a = rint(n); let b = rint(n - 1); if (b >= a) b++;
       const ia = thim.pos.indexOf(a), ib = thim.pos.indexOf(b);
       thim.pos[ia] = b; thim.pos[ib] = a; thim.sp = Math.round(sp);
       const box = $('.cups'); if (box) box.style.setProperty('--sp', thim.sp + 'ms');
-      [[ia, 'fwd'], [ib, 'bwd']].forEach(([k, c]) => {
+      [ia, ib].forEach(k => {
         const el = $(`[data-cup="${k}"]`);
-        if (el) { el.style.setProperty('--s', thim.pos[k]); el.classList.remove('fwd', 'bwd'); void el.offsetWidth; el.classList.add(c) }
+        if (el) el.style.setProperty('--s', thim.pos[k]);
       });
       const bl = $('.ball'); if (bl) bl.style.setProperty('--s', thim.pos[thim.ball]);
       sp = Math.max(Lv.sp * .6, sp * .93);
@@ -579,12 +592,12 @@ async function coposPick(k) {
     const w = res.payout ?? Math.floor(thim.stake * thim.x), before = thLvIdx();
     setBal(S.gold + w, S.copper);
     L.thLv = Math.min(TH_LV.length - 1, (L.thLv || 0) + 1); L.thStreak = (L.thStreak || 0) + 1; savePrefs(); render();
-    fx.win($(`[data-cup="${k}"]`), w, thim.x);
+    fx.win($(`[data-cup="${k}"]`), w, thim.x, false);
     const up = thLvIdx() > before;
     toast(pickOne(JOKES.thWin) + (up ? ` · Nível ${thLvIdx() + 1}: ${TH_LV[thLvIdx()].name}` : ''));
   } else {
     L.thLv = 0; L.thStreak = 0; savePrefs(); render();
-    fx.lose($('.cups')); toast(pickOne(JOKES.thLose));
+    fx.lose($('.cups'), false); toast(pickOne(JOKES.thLose));
   }
   refreshWallet();
 }
@@ -592,53 +605,93 @@ async function coposPick(k) {
 /* foguete (crash): живой полёт, кэшаут в любой момент, взрыв по точке сервера */
 const AUTOS = [0, 1.5, 2, 3, 5];
 let rk = { phase: 'idle', m: 1, crash: 1, t0: 0, stake: 0, auto: 0, sid: 0, pp: 0 };
+let rocketStarting = false;
 const rkPos = p => `left:${(8 + p * 70).toFixed(2)}%;bottom:${(12 + 52 * Math.pow(p, 1.6)).toFixed(2)}%`;
 const heat = m => m >= 10 ? 3 : m >= 3 ? 2 : m >= 1.5 ? 1 : 0;
 const trailD = (p, fill) => { let d = ''; for (let i = 0; i <= 24; i++) { const q = p * i / 24; d += (i ? 'L' : 'M') + (8 + q * 70 + 3).toFixed(2) + ' ' + (100 - (12 + 52 * Math.pow(q, 1.6)) - 3).toFixed(2) + ' ' } return fill ? d + `L${(8 + p * 70 + 3).toFixed(2)} 100 L11 100 Z` : d };
 function vFoguete() {
   const p = rk.phase;
-  const state = p === 'idle' ? 'O foguete decola — saque antes de explodir' : p === 'fly' ? 'Voando… saque antes que exploda' : p === 'crash' ? `Explodiu em x${rk.crash.toFixed(2)} — aposta queimou` : `Sacou em x${rk.m.toFixed(2)} · o foguete chegou até x${rk.crash.toFixed(2)}`;
+  const state = p === 'idle' ? 'O foguete decola — saque antes de explodir' : p === 'fly' ? 'Voando… saque antes que exploda' : p === 'crash' ? `Rodada encerrada em x${rk.crash.toFixed(2)} — a aposta foi perdida` : `Sacou em x${rk.m.toFixed(2)} · o foguete chegou até x${rk.crash.toFixed(2)}`;
   return `<div class="rk-hist" aria-label="Últimas rodadas">${(L.rhist || []).map(x => `<span class="${x >= 2 ? 'hi' : ''}">x${x.toFixed(2)}</span>`).join('') || '<span>Ainda não houve rodadas</span>'}</div>
  <div class="sky${p === 'crash' ? ' boom' : p === 'won' ? ' won' : p === 'fly' ? ' fly' : ''}"><svg class="trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path id="rfill" class="tf" d="${p === 'idle' ? '' : trailD(rk.pp || 0, true)}"/><path id="rpath" class="tl" d="${p === 'idle' ? '' : trailD(rk.pp || 0)}"/></svg><div class="mult" id="rmul" data-h="${heat(p === 'crash' ? rk.crash : rk.m)}">x${(p === 'crash' ? rk.crash : rk.m).toFixed(2)}</div><div class="rocket" id="rocket" style="${rkPos(p === 'idle' ? 0 : rk.pp || 0)}"><span>🚀</span></div>${p === 'crash' ? '<div class="blast">💥</div>' : ''}<div class="rk-state">${state}</div></div>
- ${p === 'fly' ? `<button class="cta wide" data-rcash id="rcash">Sacar ${money(Math.floor(rk.stake * rk.m))}</button>` : stakeBar() + `<div class="stake"><small>Saque automático</small><div class="stake-row">${AUTOS.map(v => `<button class="st${v === rk.auto ? ' on' : ''}" data-auto="${v}">${v ? 'x' + v : 'off'}</button>`).join('')}</div></div><button class="cta wide" data-rplay>Lançar · ${money(L.stake)}</button>`}
+  ${p === 'fly' ? `<button class="cta wide" data-rcash id="rcash">Sacar ${money(Math.floor(rk.stake * rk.m))}</button>` : stakeBar() + `<div class="stake"><small>Saque automático</small><div class="stake-row">${AUTOS.map(v => `<button class="st${v === rk.auto ? ' on' : ''}" data-auto="${v}" ${rocketStarting ? 'disabled' : ''}>${v ? 'x' + v : 'off'}</button>`).join('')}</div></div><button class="cta wide" data-rplay ${rocketStarting ? 'disabled' : ''}>${rocketStarting ? 'Iniciando…' : 'Lançar · ' + money(L.stake)}</button>`}
+
  <p class="rules">O multiplicador sobe enquanto o foguete voa. Saque antes de explodir — recebe aposta × multiplicador. Retorno ao jogador ${Math.round(RTP * 100)}%.</p>`;
 }
 async function rocketStart() {
+  if (rocketStarting || ['fly', 'cashing'].includes(rk.phase)) return;
   if (S.gold < L.stake) { toast(`Precisa de ${fmt(L.stake)} ouro`); return }
+  rocketStarting = true;
+  render();
   let res;
   try {
     res = await api('/games/crash/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bet: L.stake }),
     });
-  } catch (e) { toast('Erro: ' + e.message); refreshWallet(); return }
-  rk = { phase: 'fly', m: 1, pp: 0, crash: res.crash_point, t0: performance.now(), stake: L.stake, auto: L.auto || 0, sid: res.session_id };
+  } catch (e) { rocketStarting = false; toast('Erro: ' + e.message); refreshWallet(); render(); return }
+  rocketStarting = false;
+  const serverElapsed = Number.isFinite(Number(res.t0_ms))
+    ? Math.max(0, (Date.now() - Number(res.t0_ms)) / 1000) : 0;
+  rk = { phase: 'fly', m: multiplier_at_client(serverElapsed), pp: 0, crash: res.crash_point,
+    t0: performance.now() - serverElapsed * 1000, stake: L.stake, auto: L.auto || 0, sid: res.session_id };
   setBal(S.gold - L.stake, S.copper);
   render();
   gameTimers.push(setInterval(rocketTick, 50));
+  rocketTick();
 }
-function rocketTick() {
-  if (rk.phase !== 'fly') return;
-  const t = (performance.now() - rk.t0) / 1000, m = Math.floor(Math.exp(0.12 * t) * 100) / 100;
-  if (rk.auto && m >= rk.auto) { rk.m = rk.auto; return rocketCash(true) }
-  if (m >= rk.crash) { rk.m = rk.crash; return rocketEnd(false) }
+const multiplier_at_client = elapsed => Math.floor(Math.exp(0.12 * Math.max(0, elapsed)) * 100) / 100;
+function renderRocketFrame(m) {
   rk.m = m;
   const el = $('#rmul'); if (!el) return;
   el.textContent = 'x' + m.toFixed(2);
-  const p = Math.min(1, Math.log(m) / Math.log(8)); rk.pp = p;
+  const p = Math.min(1, Math.log(Math.max(1, m)) / Math.log(8)); rk.pp = p;
   $('#rocket').style.cssText = rkPos(p); el.dataset.h = heat(m);
   $('#rpath').setAttribute('d', trailD(p)); $('#rfill').setAttribute('d', trailD(p, true));
   const c = $('#rcash'); if (c) c.innerHTML = 'Sacar ' + money(Math.floor(rk.stake * m));
 }
+async function reconcileRocket() {
+  if (!rk.sid || ['idle', 'won', 'crash'].includes(rk.phase)) return;
+  try {
+    const res = await api(`/games/crash/status?session_id=${rk.sid}`);
+    if (res.status === 'cashed') return settleRocketWin(res, false);
+    if (res.status === 'busted') return rocketEnd(false, res);
+    if (Number.isFinite(Number(res.server_now_ms)) && Number.isFinite(Number(res.started_at_ms))) {
+      rk.t0 = performance.now() - ((Number(res.server_now_ms) - Number(res.started_at_ms)) * 1);
+      renderRocketFrame(Math.max(1, multiplier_at_client((Number(res.server_now_ms) - Number(res.started_at_ms)) / 1000)));
+    }
+  } catch (_) {
+    toast('Resultado ainda não confirmado.');
+  }
+}
+function rocketTick() {
+  if (rk.phase !== 'fly') return;
+  const t = (performance.now() - rk.t0) / 1000, m = multiplier_at_client(t);
+  if (rk.auto && m >= rk.auto) { rk.m = rk.auto; return void rocketCash(true) }
+  if (m >= rk.crash) { rk.m = rk.crash; return void finalizeCrash() }
+  renderRocketFrame(m);
+}
+async function finalizeCrash() {
+  if (rk.phase !== 'fly') return;
+  rk.phase = 'cashing'; stopGames();
+  try {
+    const res = await api(`/games/crash/cash?session_id=${rk.sid}`, { method: 'POST' });
+    if (res.win) return settleRocketWin(res, true);
+    rocketEnd(false, res);
+  } catch (e) {
+    rk.phase = 'fly'; toast('Resultado ainda não confirmado. Consulte novamente.');
+  }
+}
 async function rocketCash(auto = false) {
   if (rk.phase !== 'fly') return;
-  rocketTick();
-  if (rk.phase !== 'fly') return; // взрыв уже случился в тике
-  let res;
-  try { res = await api(`/games/crash/cash?session_id=${rk.sid}`, { method: 'POST' }) }
-  catch (e) { toast('Erro: ' + e.message); return }
-  if (!res.win) return rocketEnd(false, res);
-  stopGames();
+  rk.phase = 'cashing'; stopGames();
+  try {
+    const res = await api(`/games/crash/cash?session_id=${rk.sid}`, { method: 'POST' });
+    if (!res.win) return rocketEnd(false, res);
+    settleRocketWin(res, auto);
+  } catch (e) { rk.phase = 'fly'; toast('Resultado ainda não confirmado.'); }
+}
+function settleRocketWin(res, auto = false) {
   rk.phase = 'won'; rk.m = res.m ?? rk.m;
   L.rhist = [rk.crash, ...(L.rhist || [])].slice(0, 12); savePrefs();
   const w = res.payout ?? Math.floor(rk.stake * rk.m);
@@ -655,7 +708,7 @@ function rocketEnd(busted, res) {
   L.rhist = [rk.crash, ...(L.rhist || [])].slice(0, 12); savePrefs();
   const here = tab === 'games' && sub === 'foguete';
   if (here) { render(); fx.confetti($('.blast'), 60, FIRE); fx.lose($('.sky')) }
-  toast(pickOne(JOKES.rkLose) + ' · x' + rk.crash.toFixed(2));
+  toast('Rodada encerrada em x' + rk.crash.toFixed(2) + ' · ' + pickOne(JOKES.rkLose));
   refreshWallet();
 }
 function leaveStakeGames() {
@@ -747,8 +800,10 @@ document.addEventListener('click', e => {
   if (d.uptgt) {
     if (upBusy) return;
     const sel = mine().find(i => i.id === upSel);
-    const item = CATALOG.flatMap(c => c.rewards).find(i => i.rid === Number(d.uptgt));
-    if (sel && item) upTarget = { rid: item.rid, name: item.name, value: item.value, image: item.image, tier: item.tier };
+    const item = CATALOG.flatMap(c => c.rewards).find(i => i.targetKey === d.uptgt);
+    if (sel && item && item.caseCurrency === sel.currency && item.value > sel.value) {
+      upTarget = { targetKey: item.targetKey, rid: item.rid, name: item.name, value: item.value, image: item.image, tier: item.tier, currency: item.caseCurrency };
+    }
     return render();
   }
   if (d.upgo !== undefined) return doUpgrade();
@@ -785,6 +840,7 @@ document.addEventListener('visibilitychange', () => {
   commerce.visibilityChanged();
   renderBal();
   if (document.hidden) { savePrefs(); stopGames(); }
+  else void reconcileRocket();
 });
 window.addEventListener('pagehide', () => commerce.dispose());
 window.addEventListener('pageshow', e => { if (e.persisted) window.location.reload(); });
@@ -798,10 +854,10 @@ function initialize(retry = false) {
     try {
       if (retry) await apiClient.retryAuthentication(); else await apiClient.authenticate();
       authenticated = true;
-      await Promise.all([refreshWallet(), loadCatalog()]);
+      await Promise.all([refreshWallet(), loadCatalog(), refreshInv()]);
       initialState = 'ready'; render(); scrollProfileTarget();
       // Профильные необязательные запросы не блокируют первый экран кейсов.
-      void Promise.allSettled([refreshInv(), refreshDaily(), refreshRefs(), refreshHist(), applyBrand()]);
+      void Promise.allSettled([refreshDaily(), refreshRefs(), refreshHist(), applyBrand()]);
     } catch (error) {
       initialState = 'error'; initialAuthError = !authenticated || error.status === 401;
       initialError = WindropApi.errorMessage(error); render();

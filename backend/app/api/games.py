@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.db import get_conn
-from app.games.crash import cash_crash, play_crash, start_crash
+from app.games.crash import cash_crash, crash_status, play_crash, start_crash
 from app.games.mines import cashout, reveal, start
 from app.games.shell import pick_shell, play_shell, start_shell
 from app.games.upgrade import do_upgrade
@@ -75,6 +75,17 @@ async def crash_start(body: CrashStartRequest, user=Depends(get_current_user)): 
             from fastapi import HTTPException
 
             raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
+
+
+@router.get("/crash/status")
+async def crash_status_endpoint(session_id: int, user=Depends(get_current_user)):  # noqa: B008
+    async with get_conn() as conn:
+        try:
+            return await crash_status(conn, user, session_id)
+        except ValueError as e:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.post("/crash/cash")

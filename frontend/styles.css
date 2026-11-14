@@ -98,12 +98,12 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .mcell.gem{background:radial-gradient(circle,#1f4d3a,#16261f);border-color:#2f7d58;animation:pop .25s}.mcell.mine{background:#2a1418;border-color:#5a2630}.mcell.hit{background:#7a1f2c;border-color:var(--bad);animation:pop .3s}
 @keyframes pop{0%{transform:scale(.7)}100%{transform:scale(1)}}
 .cups{position:relative;height:200px;max-width:420px;margin:16px auto 0}
-.table{position:absolute;left:4%;right:4%;bottom:18px;height:18px;border-radius:50%;background:#0006;filter:blur(4px)}
-.cup{position:absolute;bottom:30px;left:calc(var(--s) * 33.333% + 16.666% - 46px);width:92px;height:108px;transition:left .3s ease,transform .3s ease;z-index:2}
-.cup:disabled{opacity:1;cursor:default}.cup:not(:disabled):hover{transform:translateY(-8px)}
-.cup-body{display:block;width:100%;height:100%;background:linear-gradient(90deg,#9c1029,#ff4d6d 45%,#9c1029);clip-path:polygon(18% 0,82% 0,100% 100%,0 100%);box-shadow:inset 0 -12px 0 #6e0b1e}
+.table{position:absolute;left:4%;right:4%;bottom:18px;height:18px;border-radius:50%;background:transparent;filter:none;opacity:1}
+.cup{position:absolute;bottom:30px;left:calc(var(--s) * 33.333% + 16.666% - 46px);width:92px;height:108px;transition:left .3s ease;z-index:2}
+.cup:disabled{opacity:1;cursor:default}.cup:not(:disabled):hover{filter:brightness(1.08)}
+.cup-body{display:block;width:100%;height:100%;background:linear-gradient(90deg,#9c1029,#ff4d6d 45%,#9c1029);clip-path:polygon(18% 0,82% 0,100% 100%,0 100%);box-shadow:none}
 .cup::after{content:'W';position:absolute;left:0;right:0;bottom:34px;text-align:center;font-weight:900;color:#ffe3e8;font-size:22px}
-.cup.up{transform:translateY(-70px)}.cup.good .cup-body{box-shadow:inset 0 -12px 0 #6e0b1e,0 0 12px var(--ok)}
+.cup.up{top:-40px}.cup.good .cup-body{box-shadow:none}
 .ball{position:absolute;bottom:32px;left:calc(var(--s) * 33.333% + 16.666% - 17px);width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff6c9,var(--gold) 45%,#b8811c);opacity:0;transition:opacity .2s;z-index:1}.ball.on{opacity:1}
 .rk-hist{display:flex;gap:6px;overflow-x:auto;margin:0 auto 10px;max-width:620px;scrollbar-width:none}.rk-hist span{flex:none;padding:4px 8px;border-radius:8px;background:var(--panel2);font-size:12px;font-weight:800;color:var(--mute)}.rk-hist span.hi{color:var(--ok)}
 .sky{position:relative;height:260px;border-radius:16px;overflow:hidden;max-width:620px;margin:0 auto;border:1px solid var(--line);background:radial-gradient(600px 300px at 15% 115%,#4a1830,transparent),linear-gradient(180deg,#0f0d1a,#1b1424)}
@@ -131,9 +131,11 @@ main{max-width:980px;margin:0 auto;padding:16px}
 #bg{transition:box-shadow .3s}#bg.up{box-shadow:0 0 0 1px var(--ok),0 0 18px #58d68d55}#bg.down{box-shadow:0 0 0 1px var(--bad)}
 #bg.bump{animation:bump .35s}@keyframes bump{40%{transform:scale(1.14)}}
 /* page transitions */
-#view.enter>*{animation:enter .38s cubic-bezier(.2,.8,.3,1) both}
-#view.enter>*:nth-child(2){animation-delay:.04s}#view.enter>*:nth-child(3){animation-delay:.08s}#view.enter>*:nth-child(4){animation-delay:.12s}#view.enter>*:nth-child(n+5){animation-delay:.16s}
-@keyframes enter{from{opacity:0;transform:translateY(12px)}}
+/* Перерисовка игровых состояний не должна затемнять экран через opacity fade. */
+#view.enter>*{animation:none!important}
+.win .tier{animation:none}
+.local-preview-banner{display:flex;justify-content:center;align-items:center;gap:10px;padding:7px 12px;background:#34270f;border-bottom:1px solid #806124;color:#ffe8a5;font-size:11px;letter-spacing:.02em;text-align:center}.local-preview-banner strong{color:var(--gold);font-size:10px;letter-spacing:.1em}.local-preview-banner span{color:#d9c690}@media(max-width:460px){.local-preview-banner{display:grid;gap:1px}}
+
 /* cases: idle float + shine */
 .case{overflow:hidden}
 @keyframes bob{50%{transform:translateY(-6px) rotate(-1.5deg)}}
@@ -141,7 +143,7 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .case:hover::after{left:130%;transition:left .7s ease}.case:hover{transform:translateY(-4px);border-color:#5a4e66}.case:active{transform:scale(.97)}
 .win-img img{animation:winpop .6s cubic-bezier(.2,1.5,.4,1) both}
 @keyframes winpop{from{transform:scale(.2) rotate(-25deg);opacity:0}}
-.win .tier{animation:enter .4s .15s both}
+.win .tier{animation:none}
 .cta{position:relative;overflow:hidden;transition:transform .12s,filter .12s}.cta:active:not(:disabled){transform:scale(.96)}
 .cta:not(:disabled)::after{content:'';position:absolute;top:0;bottom:0;width:30%;left:-40%;background:linear-gradient(100deg,transparent,#ffffff40,transparent);transform:skewX(-20deg);animation:ctashine 3.2s ease-in-out infinite}
 @keyframes ctashine{0%,60%{left:-40%}100%{left:140%}}
@@ -167,12 +169,10 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .th-lv span{font-size:12.5px;font-weight:700;color:var(--mute);text-align:center}
 .th-dots{display:flex;gap:6px}.th-dots i{width:26px;height:6px;border-radius:3px;background:var(--line)}.th-dots i.done{background:var(--accent2)}.th-dots i.on{background:var(--gold);box-shadow:0 0 10px #ffcf5a90;animation:glow 1.2s infinite}
 .cups{--cw:min(92px,calc(100% / var(--n,3) - 10px))}
-.cup{width:var(--cw);height:auto;aspect-ratio:92/108;left:calc((var(--s) + .5) * 100% / var(--n,3) - var(--cw) / 2);transition:left var(--sp,360ms) cubic-bezier(.45,0,.55,1),transform .3s ease}
-.cup.up{transform:translateY(-62px)}
+.cup{width:var(--cw);height:auto;aspect-ratio:92/108;left:calc((var(--s) + .5) * 100% / var(--n,3) - var(--cw) / 2);transition:left var(--sp,360ms) cubic-bezier(.45,0,.55,1)}
+.cup.up{top:-32px}
 .cup::after{font-size:18px;bottom:30%}
-.cup.fwd{z-index:3;animation:cupfwd var(--sp,360ms) ease-in-out}.cup.bwd{z-index:1;animation:cupbwd var(--sp,360ms) ease-in-out}
-@keyframes cupfwd{50%{transform:translateY(12px) scale(1.08)}}@keyframes cupbwd{50%{transform:translateY(-20px) scale(.9)}}
-.cups.busy .cup-body{box-shadow:inset 0 -12px 0 #6e0b1e,0 0 22px #ff3d5a30}
+.cups.busy .cup-body{box-shadow:none}
 .cup.good .cup-body{animation:goodcup .6s ease}@keyframes goodcup{30%{box-shadow:inset 0 -12px 0 #6e0b1e,0 0 18px var(--ok)}}
 .ball{width:calc(var(--cw) * .37);height:auto;aspect-ratio:1;left:calc((var(--s) + .5) * 100% / var(--n,3) - var(--cw) * .185);transition:opacity .2s,left var(--sp,360ms) cubic-bezier(.45,0,.55,1)}
 .ball.on{animation:ballbounce .9s ease-in-out infinite}@keyframes ballbounce{50%{transform:translateY(-6px)}}
@@ -221,9 +221,5 @@ main{max-width:980px;margin:0 auto;padding:16px}
 .case-loot img{width:38px;height:38px;border-radius:9px;object-fit:cover;background:var(--rs);border:1px solid var(--line)}
 .logo-img{height:28px;width:auto;border-radius:8px;display:block}
 
-
-/* затемнение стаканчиков через внутренний оверлей: без opacity/filter на самом стакане */
+/* Во время Copos не добавляем динамические чёрные оверлеи или затемнение результата. */
 .cup-body{position:relative}
-.cup-body::after{content:"";position:absolute;inset:0;background:#000;opacity:0;transition:opacity .3s ease;pointer-events:none}
-.cup.bwd .cup-body::after{opacity:.3}
-.cup.miss .cup-body::after{opacity:.45}

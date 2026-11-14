@@ -14,10 +14,12 @@ COPY backend/configs ./configs
 COPY backend/locales ./locales
 COPY backend/migrations ./migrations
 COPY backend/tools ./tools
+COPY infra/entrypoint.prod.sh /entrypoint.prod.sh
 
 RUN pip install --no-cache-dir . \
     && useradd -m -u 1000 appuser \
     && mkdir -p /app/media \
+    && chmod 0755 /entrypoint.prod.sh \
     && chown -R appuser:appuser /app
 
 USER appuser

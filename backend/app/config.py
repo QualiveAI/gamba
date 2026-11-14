@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     giftcard_fingerprint_key: str = ""
     db_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)
     db_pool_timeout_seconds: int = Field(default=3, ge=1, le=30)
+    # Neon/Render free ограничивают одновременные соединения: пул настраивается,
+    # чтобы API + worker + scheduler вписывались в лимит ветки.
+    # Combined entrypoint держит три процесса: 3 + 3 + 1 = 7 < лимита Neon free.
+    db_pool_min_size: int = Field(default=0, ge=0, le=5)
+    db_pool_max_size: int = Field(default=3, ge=1, le=50)
+    # Точный allowlist origins для раздельной схемы static (Vercel) + API (Render).
+    # Пусто = CORS выключен (same-origin deployment за Caddy). Wildcard запрещён.
+    cors_allow_origins: str = ""
     readiness_timeout_seconds: int = Field(default=2, ge=1, le=30)
     expected_schema_version: str = "0018_giftcard_redemption.sql"
     media_storage_mode: Literal["local", "object"] = "local"
@@ -133,7 +141,24 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Для настоящих кодов нужны отдельные ключи шифрования и fingerprint"
                 )
+        if self.cors_allow_origins:
+            origins = [part.strip() for part in self.cors_allow_origins.split(",") if part.strip()]
+            if not origins:
+                raise ValueError("CORS_ALLOW_ORIGINS задан, но не содержит значений")
+            for origin in origins:
+                parsed = urlsplit(origin)
+                if parsed.scheme != "https" or not parsed.hostname or parsed.path not in ("", "/"):
+                    raise ValueError(
+                        "CORS_ALLOW_ORIGINS допускает только точные HTTPS origins без пути"
+                    )
+                if parsed.query or parsed.fragment or parsed.username or parsed.password:
+                    raise ValueError("CORS origins не могут содержать query, fragment или userinfo")
         return self
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Точный allowlist origins; пусто = same-origin deployment без CORS."""
+        return [part.strip() for part in self.cors_allow_origins.split(",") if part.strip()]
 
     @property
     def admin_ids(self) -> set[int]:

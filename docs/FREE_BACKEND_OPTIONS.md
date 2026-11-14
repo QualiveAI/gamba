@@ -10,7 +10,7 @@ Free tier не означает SLA, production-grade backup, право на re
 
 ### 1. Основной free compute: Oracle Cloud Always Free VM
 
-**Oracle Cloud Always Free VM — первый кандидат для always-on compute**, если в выбранном регионе есть capacity и аккаунт проходит обычную верификацию. Предпочтительный профиль — Ampere A1 Flex (ARM64): суммарно до 4 OCPU и 24 GB RAM на tenancy, до 200 GB block storage; сетевые квоты, включая egress, и актуальные правила reclaim нужно проверить перед использованием. Это лимиты tenancy, а не гарантия одного непрерывного инстанса.
+**Oracle Cloud Always Free VM — первый кандидат для always-on compute**, если в выбранном регионе есть capacity и аккаунт проходит обычную верификацию. В официальной проверке 2026-11-12 для tenancy после trial указано до **2 OCPU и 12 GB RAM суммарно** по Ampere A1; превышение требует upgrade/может быть отключено по правилам тарифа. Точные block-storage/network/egress limits и capacity нужно сверить на момент создания аккаунта. Это лимиты tenancy, а не гарантия одного непрерывного инстанса.
 
 На VM можно разместить Caddy, FastAPI API, bot/payment workers, scheduler и, для закрытого preview, Redis. `infra/docker-compose.prod.yml` всё ещё предполагает один host и внешний PostgreSQL writer; документ не меняет compose и не превращает Oracle VM в managed database. ARM64 требует отдельной проверки всех Docker image и native-зависимостей.
 
@@ -49,7 +49,18 @@ Render Free Web Service, Koyeb-подобные free/sleeping web runtimes и д
 
 Vercel Hobby в этом проекте — статический `landing/` и Mini App слой. Serverless/edge invocation не превращается в постоянный процесс и не получает durable local filesystem.
 
-### 5. GitHub Actions: CI, не worker
+### 5. Другие альтернативы: near-free, trial или redesign
+
+- **Fly.io**: persistent Machines/volumes технически ближе к текущему Docker runtime, но постоянного бесплатного тарифа нет; trial/credits и стоимость нужно подтвердить перед использованием. Volume локален одному региону и не является HA media.
+- **Railway**: официальный pricing-срез показывает Trial `$5/30d`, Free `$1/month`, `1 vCPU`, `0.5 GB`, `1 replica`, `500 MB` volume и короткое хранение логов; несколько постоянных services быстро расходуют allowance. Replication/backup/HA volume в проверенном фрагменте не подтверждены — считать unknown и не обещать durability.
+- **Google Compute Engine e2-micro Always Free**: региональная и billing-account зависимость; подходит только если текущая eligibility подтверждена, ресурсов мало для полного compose/DB/media. Не считать гарантированным для любого аккаунта.
+- **Google Cloud Run + Jobs/Cloud Scheduler**: request-based API/finite jobs возможны после redesign, но scale-to-zero не держит текущие workers и scheduler session lock; local filesystem ephemeral.
+- **Cloudflare Pages/Workers**: static edge и event-driven ingest, но не постоянный Python worker; R2 может быть будущим media candidate. Для real-money web properties нужно отдельно проверить Free Services terms/AUP.
+- **GitHub Codespaces**: development-only ephemeral environment, не uptime/runtime. GitHub Actions остаётся только CI/one-shot checks.
+
+Эти варианты не являются подтверждением актуального тарифа или разрешения коммерческого real-money продукта. Официальные страницы для повторной проверки указаны в конце этого документа.
+
+### 6. GitHub Actions: CI, не worker
 
 GitHub-hosted runners эфемерны, ограничены временем job, concurrency, minutes/quota и завершаются после job. Actions разрешены для lint, тестов, compose/config checks и иных явно согласованных CI-задач. Нельзя держать там bot/payment worker, scheduler, webhook listener, Redis, backup daemon или бесконечный process; scheduled workflow не заменяет lease/heartbeat и не даёт RPO/RTO.
 
@@ -88,7 +99,7 @@ Vercel -> static landing/Mini App по желанию
 
 | Ранг / роль | Кандидат и ориентировочные limits | ToS, коммерция и эксплуатация | Media | Backup / restore | Решение |
 | --- | --- | --- | --- | --- | --- |
-| 1 — compute | **Oracle Always Free A1 Flex VM**: до 4 OCPU и 24 GB RAM суммарно, до 200 GB block storage; network/egress quota и capacity зависят от актуальной квоты/региона | Free account/AUP, верификация, региональная capacity, отсутствие SLA; возможен reclaim idle-ресурсов; один tenancy и одна failure domain | Block volume не является shared/object media. Текущий `MEDIA_STORAGE_MODE=local` остаётся single-host; `object` в приложении ещё не реализован | Нет автоматического application backup. `infra/backup.sh` делает только зашифрованный logical DB dump; media, keys и provider state резервируются отдельно | **Основной free compute candidate**, но не гарантия production |
+| 1 — compute | **Oracle Always Free A1 Flex VM**: официально подтверждённый срез 2026-11-12 для tenancy после trial — до 2 OCPU и 12 GB RAM суммарно; storage/network/capacity нужно проверить отдельно | Free account/AUP, верификация, региональная capacity, отсутствие SLA; возможен reclaim/disable; один tenancy и одна failure domain | Block volume не является shared/object media. Текущий `MEDIA_STORAGE_MODE=local` остаётся single-host; `object` в приложении ещё не реализован | Нет автоматического application backup. `infra/backup.sh` делает только зашифрованный logical DB dump; media, keys и provider state резервируются отдельно | **Основной free compute candidate**, но не гарантия production |
 | 1a — zero-budget lab | PostgreSQL + Redis на той же Oracle VM: лимит задаётся общей RAM/CPU/disk budget | Нет managed HA, SLA или автоматического promotion; отказ VM останавливает весь стек | Local Docker volume, одна host failure domain | VM/block snapshot не заменяет offsite dump и restore drill; Redis можно восстановить, DB/media/keys — отдельной процедурой | Только закрытый preview/test |
 | 2 — managed PostgreSQL | **Neon Free**: исторически публично указывались 0.5 GB storage и 100 CU-hours/project/month; scale-to-zero и project/connection quotas меняются | Free plan без production SLA; scale-to-zero ломает предположение о постоянной session advisory lock; допустимость коммерческого live-продукта проверяется по актуальному ToS | Не использовать как media store; object adapter приложения отсутствует | Branch/restore features не равны гарантированному PITR. Делать собственный encrypted `pg_dump` и drill; retention/free backup проверить | Preview/test candidate |
 | 3 — managed PostgreSQL | **Supabase Free**: исторически 500 MB DB/project, 5 GB bandwidth, 1 GB file storage и ограниченное число free projects; проект может pause при неактивности | Free/no-SLA, quotas и pause policy; direct/session endpoint нужен для migration/scheduler; pooler transaction mode несовместим с advisory lock | Supabase Storage не подключён к текущему media adapter; local `/app/media` не становится shared | Не считать free backup/PITR гарантией. Export, ключи и media резервировать отдельно; restore drill обязателен | Preview/dev candidate |

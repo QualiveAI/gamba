@@ -10,7 +10,9 @@ Grid 5x5. Multipliers table. Bias next move.
 
 ## Crash
 
-crash_point = max(1.0, (1/(1-roll))*0.95). Cashout validation.
+Новый `/games/crash/start` — server-authoritative flow: сервер один раз фиксирует `crash_point`, списывает ставку; `/games/crash/cash` проверяет время, owner и статус под row lock. Чистая distribution policy находится в `backend/app/games/crash.py`, использует `SESSION_RTP=0.97`, cap `1000` и не зависит от user/bet/streak/loss history.
+
+Legacy `/games/crash` и отдельный plugin adapter имеют отличающиеся формулы и не должны включаться в live player path до единого contract/commitment-reveal audit. См. `docs/CRASH_DISTRIBUTION.md`.
 
 ## Upgrade
 
