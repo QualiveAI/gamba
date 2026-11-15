@@ -4,4 +4,4 @@
  * без завершающего слэша, например https://windrop-api.onrender.com.
  * Секретов здесь не бывает: токены, DSN и ключи живут только на сервере.
  */
-window.WINDROP_API_ORIGIN = "";
+window.WINDROP_API_ORIGIN = "https://windrop-api.onrender.com";
