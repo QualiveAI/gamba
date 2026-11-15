@@ -135,3 +135,53 @@ test('ошибка auth кэшируется до явного повторен�
   assert.ok(results.every(result => result.status === 'rejected')); assert.equal(calls, 1);
   await assert.rejects(client.retryAuthentication()); assert.equal(calls, 2);
 });
+
+test('идемпотентный GET повторяется один раз после сетевого сбоя', async () => {
+  let calls = 0;
+  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+    if (path === '/auth/telegram') return response(200, { access_token: jwt() });
+    calls++;
+    if (calls === 1) throw new Error('connection reset');
+    return response(200, { ok: true });
+  } });
+  const data = await client.request('/cases');
+  assert.equal(calls, 2);
+  assert.deepEqual(data, { ok: true });
+});
+
+test('mutating POST после сетевого сбоя сам не повторяется', async () => {
+  let calls = 0;
+  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+    if (path === '/auth/telegram') return response(200, { access_token: jwt() });
+    calls++;
+    throw new Error('connection reset');
+  } });
+  await assert.rejects(client.request('/games/crash/start', { method: 'POST' }), error => error.code === 'network_unavailable');
+  assert.equal(calls, 1);
+});
+
+test('авторизация повторяется после сетевого сбоя один раз', async () => {
+  let authCalls = 0;
+  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+    if (path === '/auth/telegram') {
+      authCalls++;
+      if (authCalls === 1) throw new Error('connection reset');
+      return response(200, { access_token: jwt() });
+    }
+    return response(200, { ok: true });
+  } });
+  const data = await client.request('/cases');
+  assert.equal(authCalls, 2);
+  assert.deepEqual(data, { ok: true });
+});
+
+test('сетевой сбой авторизации не кэшируется как отказ Telegram', async () => {
+  let authCalls = 0;
+  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+    if (path === '/auth/telegram') { authCalls++; throw new Error('connection reset'); }
+    return response(200, {});
+  } });
+  await assert.rejects(client.request('/cases'), error => error.code === 'network_unavailable');
+  await assert.rejects(client.request('/cases'), error => error.code === 'network_unavailable');
+  assert.equal(authCalls, 4);
+});

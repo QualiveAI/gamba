@@ -43,6 +43,10 @@
     invalid_request: 'Confira os dados da solicitação antes de continuar.',
   };
 
+  // Холодный старт Render free идёт до минуты: запрос упирается в таймаут или
+  // в 503 от прокси. Идемпотентные запросы и авторизация повторяются один раз.
+  const NETWORK_RETRY_CODES = new Set(['network_timeout', 'network_unavailable', 'service_unavailable']);
+
   class ApiError extends Error {
     constructor(code, status = 0) {
       const known = Object.hasOwn(MESSAGES, code) ? code : 'request_rejected';
@@ -92,7 +96,7 @@
 
   function createClient({ fetch: transport = globalThis.fetch.bind(globalThis), origin = '', search = '',
     getTelegram = () => globalThis.Telegram && globalThis.Telegram.WebApp,
-    storage, timeoutMs = 15000 } = {}) {
+    storage, timeoutMs = 45000 } = {}) {
     let token = '', context = null, authPromise = null, authFailure = null;
     // Старый общий ключ нельзя переносить между аккаунтами/ботами. Новые JWT не сохраняются.
     try { storage && storage.removeItem('jwt'); } catch (_) {}
@@ -130,8 +134,16 @@
         }
         const body = { init_data: initData };
         if (botId !== undefined) body.auth_bot_id = botId;
-        const data = await send('/auth/telegram', { method: 'POST',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const options = { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+        let data;
+        try {
+          data = await send('/auth/telegram', options);
+        } catch (error) {
+          // ensure_telegram_user идемпотентен, поэтому сетевой сбой можно повторить.
+          if (!(error instanceof ApiError) || !NETWORK_RETRY_CODES.has(error.code)) throw error;
+          data = await send('/auth/telegram', options);
+        }
         if (!data || typeof data.access_token !== 'string' || !data.access_token || data.access_token.length > 8192) {
           throw new ApiError('invalid_response');
         }
@@ -143,31 +155,48 @@
         return token;
       })().catch(error => {
         token = '';
-        authFailure = error instanceof ApiError ? error : new ApiError('invalid_telegram_auth', 401);
-        throw authFailure;
+        const failure = error instanceof ApiError ? error : new ApiError('invalid_telegram_auth', 401);
+        // Сетевой сбой не фиксируем как auth-failure: иначе холодный старт Render
+        // выглядит как «неправильный Telegram» и повторная авторизация заблокирована.
+        if (!NETWORK_RETRY_CODES.has(failure.code)) authFailure = failure;
+        throw failure;
       }).finally(() => { authPromise = null; });
       return authPromise;
     }
 
     async function request(path, options = {}) {
       await authenticate();
-      for (let attempt = 0; attempt < 2; attempt++) {
+      const method = String((options && options.method) || 'GET').toUpperCase();
+      // Повторяем только идемпотентные запросы: POST с игрой или обменом монет
+      // backend сам защищает идемпотентностью, но лишний повтор всё равно не нужен.
+      let networkRetries = method === 'GET' || method === 'HEAD' ? 1 : 0;
+      let authRetries = 1;
+      for (let attempt = 0; attempt < 3; attempt++) {
         const sentToken = token;
         try {
           return await send(path, { ...options,
             headers: { ...options.headers, Authorization: 'Bearer ' + sentToken } });
         } catch (error) {
-          if (error.status !== 401) throw error;
-          if (attempt === 1) {
-            token = '';
-            authFailure = new ApiError('invalid_telegram_auth', 401);
-            throw authFailure;
+          if (error.status === 401) {
+            if (authRetries <= 0) {
+              token = '';
+              authFailure = new ApiError('invalid_telegram_auth', 401);
+              throw authFailure;
+            }
+            authRetries -= 1;
+            // Параллельный 401 от старого JWT не запускает новую авторизацию после её завершения.
+            if (token === sentToken) token = '';
+            await authenticate();
+            continue;
           }
-          // Параллельный 401 от старого JWT не запускает новую авторизацию после её завершения.
-          if (token === sentToken) token = '';
-          await authenticate();
+          if (networkRetries > 0 && error instanceof ApiError && NETWORK_RETRY_CODES.has(error.code)) {
+            networkRetries -= 1;
+            continue;
+          }
+          throw error;
         }
       }
+      throw new ApiError('service_unavailable');
     }
 
     return {

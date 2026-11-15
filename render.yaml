@@ -60,9 +60,9 @@ envVarGroups:
       - key: PUBLIC_BASE_URL
         sync: false # https://windrop-api.onrender.com
       - key: WEBAPP_URL
-        sync: false # https://<vercel-domain>/app/
+        sync: false # https://<pages-domain>/ — Mini App живёт на Cloudflare Pages
       - key: CORS_ALLOW_ORIGINS
-        sync: false # https://<vercel-domain> без пути и слэша
+        sync: false # https://<pages-domain> без пути и слэша
       - key: FERNET_KEY
         sync: false
       - key: JWT_SECRET

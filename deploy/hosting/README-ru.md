@@ -1,19 +1,21 @@
 # WINDROP — бесплатный стек без ПК
 
 Стек собран так, чтобы всё работало без домашнего компьютера и без платных планов:
-**Neon** (Postgres) + **Upstash** (Redis) + **Vercel** (статика Mini App) +
-**Render** (API + bot worker + scheduler в одном контейнере) + **Cloudflare R2** (зашифрованные бэкапы).
+**Neon** (Postgres) + **Upstash** (Redis) + **Cloudflare Pages** (статика Mini App и
+проксирующая Function) + **Render** (API + bot worker + scheduler в одном контейнере) +
+**Cloudflare R2** (зашифрованные бэкапы).
 Landing остаётся на **Cloudflare Pages** из отдельного репозитория `gamba-landing`.
 
 ```
 landing (Cloudflare Pages, repo gamba-landing)
   └─ CTA → https://t.me/robwindropbot
-        └─ Mini App:  https://<vercel>/app/   ──HTTPS + CORS──▶  Render windrop-api
-                                                                   ├─ uvicorn (API)
-                                                                   ├─ bot worker (inbox/outbox)
-                                                                   └─ scheduler (advisory lock)
-Render windrop-api ──▶ Neon Postgres (Ohio, scale-to-zero)
-                   └──▶ Upstash Redis (rediss://)
+        └─ Mini App:  https://<pages>/           ← Cloudflare Pages, статика
+                      https://<pages>/api/*      ← Pages Function → Render API
+Render windrop-api ─┬─ uvicorn (API)
+                    ├─ bot worker (inbox/outbox)
+                    ├─ scheduler (advisory lock)
+                    ├─▶ Neon Postgres (Ohio, scale-to-zero)
+                    └─▶ Upstash Redis (rediss://)
 Render windrop-api, старт контейнера ──▶ python -m app.bot.main (provisioning webhook)
 GitHub Actions 03:17 UTC ──▶ pg_dump | age → R2 (хранение 14 дней)
 GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одноразовая БД
@@ -21,6 +23,10 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 
 Почему именно так:
 
+- **Статика на Cloudflare Pages, API проксируется Pages Function.** Домены `*.vercel.app`
+  и `*.onrender.com` из части сетей (в частности из РФ) недоступны: соединение обрывается
+  на TLS. Cloudflare открыт. Один origin → CORS в браузере не участвует вовсе.
+  Подробности: `infra/cloudflare/pages/README-ru.md`.
 - **Один контейнер на Render.** Free-план даёт ~750 instance-часов в месяц на аккаунт;
   отдельные web + worker + scheduler съели бы бюджет и сервисы вставали бы до конца месяца.
   `infra/entrypoint.prod.sh` держит три процесса в одном контейнере, а падение API роняет контейнер
@@ -35,21 +41,18 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 
 ## Порядок действий
 
-Порядок важен: адрес Vercel нужен Render-у для `WEBAPP_URL`/`CORS_ALLOW_ORIGINS`, а адрес Render
-нужен фронтенду для `WINDROP_API_ORIGIN`. Не открывай `/app` до шага 7 — иначе браузер закэширует
-пустой API-origin.
+Порядок важен: адрес Pages нужен Render-у для `WEBAPP_URL`/`CORS_ALLOW_ORIGINS`.
 
 | # | Сервис | Что сделать | Что получить |
 |---|---|---|---|
 | 1 | Neon | Create project (Postgres only, Ohio, 1 GB) | DIRECT DSN |
-| 2 | Upstash | Create database (us-east-1, TLS) | `rediss://` URL |
-| 3 | Vercel | Импорт `QualiveAI/gamba`, ветка `main` | домен `https://<project>.vercel.app` |
+| 2 | Upstash | Create database (us-east-2, TLS) | `rediss://` URL |
+| 3 | Cloudflare Pages | Pages-проект из `QualiveAI/gamba`, root `frontend` | домен `https://<project>.pages.dev` |
 | 4 | BotFather | `/revoke` токена + Managed Bots | новый `BOT_TOKEN` |
 | 5 | GitHub | secrets + variables, `migrate.yml` | схема БД в Neon |
 | 6 | Render | **Blueprint** из `render.yaml` + env | `https://windrop-api.onrender.com` |
-| 7 | Репозиторий | `frontend/js/api-config.js` = Render origin | фронт ходит в Render |
-| 8 | Render | Restart сервиса `windrop-api` | webhook установлен |
-| 9 | GitHub | первый ручной запуск backup | дамп в R2 |
+| 7 | Render | `WEBAPP_URL`/`CORS_ALLOW_ORIGINS` = домен Pages, Restart | бот открывает Mini App |
+| 8 | GitHub | первый ручной запуск backup | дамп в R2 |
 
 ## 1. Neon
 
@@ -79,17 +82,18 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
   тоже подходит. Иначе каждый Redis-запрос идёт через полмира (флаги и кэш каталога читаются
   на каждом запросе API). Если база создана в другом регионе — удали и создай заново, данных там нет.
 
-## 3. Vercel
+## 3. Cloudflare Pages
 
-1. vercel.com → Add New → Project → Import Git Repository → `QualiveAI/gamba`.
-2. Настройки: **Framework Preset: Other**, Root Directory: `./`, Build Command и Output Directory
-   — **пустые**, Environment Variables — **никаких**.
-3. Deploy. Репозиторий уже содержит `vercel.json` (legacy `routes`: `/app` → `frontend/`,
-   всё остальное → `landing/`). Никаких crons/functions — на Hobby они ломают сборку.
-4. Запиши production-домен: `https://<project>.vercel.app`.
+Полная инструкция — `infra/cloudflare/pages/README-ru.md`. Коротко:
 
-Если деплой упал — смотри Build Logs: почти всегда это лишний Framework Preset (Next.js) или
-непустой Output Directory.
+1. dashboard.cloudflare.com → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**
+   → репозиторий `QualiveAI/gamba`, ветка `main`.
+2. Build settings: Framework preset **None**, Root directory **`frontend`**, Build command
+   **`node build-pages.mjs`**, Build output directory **`dist`**, переменных окружения нет.
+3. Deploy → домен `https://<project>.pages.dev`.
+
+Сборка обязательна: в `frontend/` лежат node_modules и ~300 МБ экспериментальных ассетов,
+Pages принимает только собранный `dist/` (4–5 МБ).
 
 ## 4. BotFather
 
@@ -155,9 +159,9 @@ grep '^# public key:' windrop-backup.key    # → AGE_RECIPIENT_PUBLIC
 | `REDIS_URL` | `rediss://…` из Upstash |
 | `BOT_TOKEN` | новый токен @robwindropbot из шага 4 |
 | `ADMIN_TELEGRAM_IDS` | твой Telegram ID (@userinfobot), через запятую если несколько |
-| `PUBLIC_BASE_URL` | `https://windrop-api.onrender.com` — нужен и web, и cron: у cron нет своего URL, он ставит webhook на этот адрес |
-| `WEBAPP_URL` | `https://<project>.vercel.app/app/` — обязательно со слэшем на конце |
-| `CORS_ALLOW_ORIGINS` | `https://<project>.vercel.app` — без пути и без слэша |
+| `PUBLIC_BASE_URL` | `https://windrop-api.onrender.com` — на этот адрес ставится webhook |
+| `WEBAPP_URL` | `https://<pages-domain>/` — Mini App живёт на Cloudflare Pages, обязательно со слэшем |
+| `CORS_ALLOW_ORIGINS` | `https://<pages-domain>` — без пути и без слэша |
 | `FERNET_KEY` | сгенерировать один раз: `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` |
 
 `JWT_SECRET` и `TELEGRAM_WEBHOOK_SECRET` Render сгенерирует сам (`generateValue`).
@@ -168,21 +172,25 @@ grep '^# public key:' windrop-backup.key    # → AGE_RECIPIENT_PUBLIC
 Дождись деплоя. Адрес API: `https://windrop-api.onrender.com` (если имя занято — Render добавит
 суффикс, тогда используй фактический адрес из dashboard).
 
-## 7. Подключить фронтенд к API
+## 7. Указать боту, где Mini App
 
-`frontend/js/api-config.js`:
+После того как Pages-проект задеплоен, в Render → Environment Groups → `windrop-backend-env`:
 
-```js
-window.WINDROP_API_ORIGIN = "https://windrop-api.onrender.com";
+- `WEBAPP_URL` = `https://<pages-domain>/`
+- `CORS_ALLOW_ORIGINS` = `https://<pages-domain>`
+
+Затем **Restart service**: `infra/entrypoint.prod.sh` провижинит webhook заново, и бот
+перезапишет кнопку «Abrir WINDROP» на новый адрес.
+
+Сам фронтенд править не нужно: `frontend/js/api-config.js` сам подставляет
+`location.origin + "/api"`, а `frontend/functions/api/[[path]].js` проксирует эти запросы
+в Render. Origin у статики и API один, поэтому CORS в браузере не работает.
+
+Проверка (одна строка, доказывает всю цепочку Pages → Function → Render):
+
 ```
-
-И в `frontend/index.html` подними версию файла: `api-config.js?v=1` → `?v=2` (ассеты под `/app`
-кэшируются на год, версия в query — единственный способ доставить новое значение).
-Commit + push в `main` → Vercel пересоберётся сам.
-
-Проверка: `https://<project>.vercel.app/app/` открывается без ошибок CORS в консоли.
-Если CORS ругается — сверь `CORS_ALLOW_ORIGINS` в Render с фактическим origin (схема+хост,
-без слэша); после правки Render перезапустит сервис.
+https://<pages-domain>/api/health → {"status":"ok","db":"ok","schema":"ok","outbox":"ok","redis":"ok"}
+```
 
 ## 8. Webhook
 
@@ -216,7 +224,8 @@ Actions → **Backup PostgreSQL to R2** → Run workflow (ручной прог�
 
 ## Проверка после деплоя
 
-1. `curl -s https://windrop-api.onrender.com/health` → 200 (первый запрос после сна ~30–60 с).
+1. `curl -s https://<pages-domain>/api/health` → 200 (проверяет статику, Function и Render разом;
+   первый запрос после сна Render ~30–60 с).
 2. `getWebhookInfo` — см. шаг 8.
 3. Cloudflare landing → кнопка открывает `https://t.me/robwindropbot?start=lp_organic`.
 4. В боте `/start` → кнопка «Abrir WINDROP» открывает Mini App.
@@ -240,9 +249,11 @@ Actions → **Backup PostgreSQL to R2** → Run workflow (ручной прог�
   Игры, баланс, инвентарь и Managed Bots работают; для выдачи карт нужны реальные коды и отдельные
   ключи (`GIFTCARD_FERNET_KEY`, `GIFTCARD_FINGERPRINT_KEY`), для приёма Stars — включение
   `PAYMENTS_MODE` и merchant-настройки главного бота.
-- **Vercel Hobby — некоммерческая лицензия.** Для теста нормально; перед реальным запуском
-  проверить AUP или перенести статику на Cloudflare Pages.
-- **Vercel preview-домены не в allowlist CORS.** Тестировать нужно на production-домене.
+- **Статика переехала с Vercel на Cloudflare Pages.** `*.vercel.app` и `*.onrender.com`
+  из части сетей (в частности из РФ) недоступны на уровне TLS. Cloudflare открыт, и лимиты
+  Pages (20 000 файлов на деплой) укладываются в наш `dist/` на 196 файлов.
+- **Старый Vercel-проект можно удалить.** `vercel.json` в репозитории остался как запасной
+  вариант; Mini App обслуживается Pages-проектом, а не Vercel.
 
 ## Перенос с бесплатного стека на постоянный
 
@@ -256,4 +267,4 @@ Actions → **Backup PostgreSQL to R2** → Run workflow (ручной прог�
 5. `WEBAPP_URL`/`CORS_ALLOW_ORIGINS` — если меняется домен статики.
 
 Старые `deploy/hosting/vercel/api/` (serverless-обёртка) и `deploy/hosting/cloudflare/build-dist.sh`
-в этой схеме не используются: API живёт на Render, статика Mini App — на Vercel.
+в этой схеме не используются: API живёт на Render, статика Mini App — на Cloudflare Pages.
