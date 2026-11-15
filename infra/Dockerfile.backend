@@ -25,5 +25,6 @@ RUN pip install --no-cache-dir . \
 USER appuser
 EXPOSE 8000
 
-# API workers не запускают scheduler, polling или очередь Telegram.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--no-access-log"]
+# Единая точка входа: API + bot worker + scheduler + provisioning в одном контейнере.
+# Голый uvicorn здесь недопустим — тогда на Render не будет ни worker, ни scheduler.
+CMD ["/entrypoint.prod.sh"]

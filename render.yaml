@@ -37,6 +37,10 @@ envVarGroups:
         value: "true"
       - key: BOT_WORKER_RESCAN_SECONDS
         value: "300"
+      # Webhook выставляется на старте контейнера: у free-плана нет ни Shell,
+      # ни cron-сервиса (Render не разрешает cron на free).
+      - key: BOT_PROVISION_ON_START
+        value: "true"
       # Free-лимиты соединений: API 3 + worker 3 + scheduler 1.
       - key: DB_POOL_MIN_SIZE
         value: "0"
@@ -52,8 +56,7 @@ envVarGroups:
         sync: false # только после revoke в @BotFather
       - key: ADMIN_TELEGRAM_IDS
         sync: false
-      # Адрес публичного API. Нужен и web-сервису, и cron: cron не имеет своего
-      # URL, поэтому берёт этот, чтобы поставить webhook на windrop-api.
+      # Адрес публичного API: нужен для setWebhook при провижининге на старте.
       - key: PUBLIC_BASE_URL
         sync: false # https://windrop-api.onrender.com
       - key: WEBAPP_URL
@@ -81,23 +84,5 @@ services:
     dockerContext: .
     healthCheckPath: /health
     autoDeploy: true
-    envVars:
-      - fromGroup: windrop-backend-env
-
-  # У free-плана нет Shell, поэтому provisioning webhook выполняется этим job.
-  # `python -m app.bot.main` идемпотентен: upsert registry + setWebhook, без
-  # удаления updates и без polling. Запуск раз в сутки восстанавливает webhook,
-  # если его перебили извне; стоит секунды instance-time.
-  - type: cron
-    name: windrop-provision-webhook
-    runtime: docker
-    plan: free
-    region: ohio
-    schedule: "0 5 * * *"
-    repo: https://github.com/QualiveAI/gamba
-    branch: main
-    dockerfilePath: ./infra/Dockerfile.backend
-    dockerContext: .
-    dockerCommand: python -m app.bot.main
     envVars:
       - fromGroup: windrop-backend-env

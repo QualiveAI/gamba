@@ -35,6 +35,19 @@ API_PID=$!
 CHILD_PIDS+=("$API_PID")
 log "api запущен (pid ${API_PID})"
 
+# Provisioning главного бота. У Render free нет Shell, а cron-сервис на free-плане
+# недоступен, поэтому webhook выставляется на старте контейнера. `app.bot.main`
+# идемпотентен (upsert registry + setWebhook, drop_pending_updates=False) и в
+# webhook-режиме сразу завершается. Сбой не валит контейнер: ранее установленный
+# webhook продолжает работать, а ошибка остаётся в логах.
+if [[ "${BOT_PROVISION_ON_START:-true}" == "true" && "${BOT_MODE:-disabled}" != "disabled" && -n "${BOT_TOKEN:-}" ]]; then
+    if timeout 60 python -m app.bot.main; then
+        log "webhook provisioning: ok"
+    else
+        log "webhook provisioning: failed (api поднимается без него)"
+    fi
+fi
+
 if [[ "${BOT_WORKER_ENABLED:-true}" == "true" ]]; then
     python -m app.bot.worker &
     CHILD_PIDS+=("$!")

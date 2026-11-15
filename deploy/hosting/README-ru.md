@@ -14,7 +14,7 @@ landing (Cloudflare Pages, repo gamba-landing)
                                                                    └─ scheduler (advisory lock)
 Render windrop-api ──▶ Neon Postgres (Ohio, scale-to-zero)
                    └──▶ Upstash Redis (rediss://)
-Render cron 05:00 UTC ──▶ python -m app.bot.main (идемпотентный provisioning webhook)
+Render windrop-api, старт контейнера ──▶ python -m app.bot.main (provisioning webhook)
 GitHub Actions 03:17 UTC ──▶ pg_dump | age → R2 (хранение 14 дней)
 GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одноразовая БД
 ```
@@ -48,7 +48,7 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 | 5 | GitHub | secrets + variables, `migrate.yml` | схема БД в Neon |
 | 6 | Render | **Blueprint** из `render.yaml` + env | `https://windrop-api.onrender.com` |
 | 7 | Репозиторий | `frontend/js/api-config.js` = Render origin | фронт ходит в Render |
-| 8 | Render | Trigger run у `windrop-provision-webhook` | webhook установлен |
+| 8 | Render | Restart сервиса `windrop-api` | webhook установлен |
 | 9 | GitHub | первый ручной запуск backup | дамп в R2 |
 
 ## 1. Neon
@@ -145,7 +145,8 @@ grep '^# public key:' windrop-backup.key    # → AGE_RECIPIENT_PUBLIC
 
 1. dashboard.render.com → **New +** → **Blueprint**.
 2. Connect GitHub → выбери `QualiveAI/gamba`, ветка `main`. Render прочитает `render.yaml`
-   и покажет два сервиса: `windrop-api` (web) и `windrop-provision-webhook` (cron).
+   и покажет один сервис `windrop-api` (web). Cron-сервиса в Blueprint нет: Render не разрешает
+   `plan: free` для типа `cron`, поэтому provisioning встроен в старт контейнера.
 3. Apply. В форме Blueprint сразу заполни `sync: false` переменные:
 
 | Переменная | Значение |
@@ -185,10 +186,14 @@ Commit + push в `main` → Vercel пересоберётся сам.
 
 ## 8. Webhook
 
-Cron `windrop-provision-webhook` идёт раз в сутки в 05:00 UTC. Чтобы не ждать:
+`infra/entrypoint.prod.sh` запускает `python -m app.bot.main` при каждом старте контейнера:
+upsert registry + `setWebhook` (без удаления updates). Render free засыпает и просыпается —
+это же свойство заодно переустанавливает webhook после любого рестарта и деплоя.
 
-1. Render → `windrop-provision-webhook` → **Trigger run**.
-2. Логи должны показать `getMe` и успешный `setWebhook` без ошибок.
+1. Render → `windrop-api` → **Manual Deploy** → **Restart service** (если сервис уже поднят,
+   провижининг уже прошёл при первом старте).
+2. В логах найди `[entrypoint] webhook provisioning: ok`. Если там `failed` — смотри ошибку выше:
+   чаще всего пустой `BOT_TOKEN` или неверный `PUBLIC_BASE_URL`.
 3. Проверка без токена в shell history:
 
 ```bash
@@ -228,8 +233,9 @@ Actions → **Backup PostgreSQL to R2** → Run workflow (ручной прог�
 - **0.1 CPU / 512 MB** на сервис. Трёх процессов хватает для теста, но пиковая нагрузка упрётся
   в CPU раньше, чем в память.
 - **Neon scale-to-zero.** Холодный старт БД 1–2 с; событийный worker специально не будит её вхолостую.
-- **Cron на free-плане.** Если Render откажется применять `plan: free` для cron-сервиса — не плати:
-  provisioning переносится в GitHub Actions тем же `python -m app.bot.main`.
+- **Cron на free-плане недоступен.** Render отвечает `plan: free not a valid plan for service
+  type cron`, поэтому webhook ставится на старте контейнера (`BOT_PROVISION_ON_START=true`).
+  Платить за cron не нужно.
 - **Платежи и выдача карт выключены** (`PAYMENTS_MODE=disabled`, `GIFTCARD_MODE=disabled`).
   Игры, баланс, инвентарь и Managed Bots работают; для выдачи карт нужны реальные коды и отдельные
   ключи (`GIFTCARD_FERNET_KEY`, `GIFTCARD_FINGERPRINT_KEY`), для приёма Stars — включение
