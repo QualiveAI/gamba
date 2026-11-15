@@ -36,7 +36,7 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 ## Порядок действий
 
 Порядок важен: адрес Vercel нужен Render-у для `WEBAPP_URL`/`CORS_ALLOW_ORIGINS`, а адрес Render
-нужен фронтенду для `WINDROP_API_ORIGIN`. Не открывай `/app` до шага 6 — иначе браузер закэширует
+нужен фронтенду для `WINDROP_API_ORIGIN`. Не открывай `/app` до шага 7 — иначе браузер закэширует
 пустой API-origin.
 
 | # | Сервис | Что сделать | Что получить |
@@ -44,10 +44,10 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 | 1 | Neon | Create project (Postgres only, Ohio, 1 GB) | DIRECT DSN |
 | 2 | Upstash | Create database (us-east-1, TLS) | `rediss://` URL |
 | 3 | Vercel | Импорт `QualiveAI/gamba`, ветка `main` | домен `https://<project>.vercel.app` |
-| 4 | Render | **Blueprint** из `render.yaml` + env | `https://windrop-api.onrender.com` |
+| 4 | BotFather | `/revoke` токена + Managed Bots | новый `BOT_TOKEN` |
 | 5 | GitHub | secrets + variables, `migrate.yml` | схема БД в Neon |
-| 6 | Репозиторий | `frontend/js/api-config.js` = Render origin | фронт ходит в Render |
-| 7 | BotFather | `/revoke` токена + Managed Bots | новый `BOT_TOKEN` |
+| 6 | Render | **Blueprint** из `render.yaml` + env | `https://windrop-api.onrender.com` |
+| 7 | Репозиторий | `frontend/js/api-config.js` = Render origin | фронт ходит в Render |
 | 8 | Render | Trigger run у `windrop-provision-webhook` | webhook установлен |
 | 9 | GitHub | первый ручной запуск backup | дамп в R2 |
 
@@ -82,36 +82,18 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 Если деплой упал — смотри Build Logs: почти всегда это лишний Framework Preset (Next.js) или
 непустой Output Directory.
 
-## 4. Render
+## 4. BotFather
 
-В скриншоте «Create a new Worker» — это **не тот** путь: worker-сервис запускает только worker и
-съедает второй instance-час-бюджет. Нужен **Blueprint**.
-
-1. dashboard.render.com → **New +** → **Blueprint**.
-2. Connect GitHub → выбери `QualiveAI/gamba`, ветка `main`. Render прочитает `render.yaml`
-   и покажет два сервиса: `windrop-api` (web) и `windrop-provision-webhook` (cron).
-3. Apply. После создания открой `windrop-api` → Environment и заполни `sync: false` переменные:
-
-| Переменная | Значение |
-|---|---|
-| `DATABASE_URL` | DSN из Neon (**direct**, `?sslmode=require`) |
-| `REDIS_URL` | `rediss://…` из Upstash |
-| `BOT_TOKEN` | новый токен @robwindropbot **после** `/revoke` (шаг 7) |
-| `ADMIN_TELEGRAM_IDS` | твой Telegram ID (@userinfobot), через запятую если несколько |
-| `WEBAPP_URL` | `https://<project>.vercel.app/app/` — обязательно со слэшем на конце |
-| `CORS_ALLOW_ORIGINS` | `https://<project>.vercel.app` — без пути и без слэша |
-| `FERNET_KEY` | сгенерировать один раз: `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` |
-
-`JWT_SECRET` и `TELEGRAM_WEBHOOK_SECRET` Render сгенерирует сам (`generateValue`).
-`PUBLIC_BASE_URL` подставляется автоматически из адреса сервиса.
-
-`FERNET_KEY` — самый важный ключ: им зашифрованы токены managed-ботов, payload-ы inbox/outbox и
-коды gift-card. Потеря ключа делает бэкапы бесполезными, поэтому сохрани его в менеджере паролей.
-
-Дождись деплоя. Адрес API: `https://windrop-api.onrender.com` (если имя занято — Render добавит
-суффикс, тогда используй фактический адрес из dashboard).
+1. `/mybots` → `@robwindropbot` → **API Token** → **Revoke current token**.
+   Оба токена, которые присылались в чат, считаются скомпрометированными.
+2. Новый токен вставь **только** в Render env `BOT_TOKEN` (не в git, не в Vercel, не в Cloudflare).
+   Он понадобится на шаге 6.
+3. Включи Managed Bots для главного бота (`/managebots` либо Bot Settings → Managed Bots).
 
 ## 5. GitHub: секреты, миграции, бэкапы
+
+Миграции идут **до** первого деплоя Render: `/health` проверяет наличие `schema_migrations`
+и таблиц ботов, поэтому без схемы сервис не пройдёт health check.
 
 Repo → Settings → Secrets and variables → Actions.
 
@@ -119,7 +101,7 @@ Repo → Settings → Secrets and variables → Actions.
 
 | Secret | Откуда |
 |---|---|
-| `DATABASE_URL_PROD` | DSN Neon (тот же, что в Render) |
+| `DATABASE_URL_PROD` | DSN Neon (тот же, что попадёт в Render) |
 | `R2_ACCOUNT_ID` | Cloudflare dashboard → R2 → Account ID |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 → Manage API Tokens → Create (Object Read & Write) |
 | `R2_BUCKET` | имя бакета, например `windrop-backups` |
@@ -144,7 +126,36 @@ grep '^# public key:' windrop-backup.key    # → AGE_RECIPIENT_PUBLIC
 
 Ожидаемый результат: 18 миграций (`0001` … `0018_giftcard_redemption.sql`).
 
-## 6. Подключить фронтенд к API
+## 6. Render
+
+В скриншоте «Create a new Worker» — это **не тот** путь: worker-сервис запускает только worker и
+съедает второй instance-час-бюджет. Нужен **Blueprint**.
+
+1. dashboard.render.com → **New +** → **Blueprint**.
+2. Connect GitHub → выбери `QualiveAI/gamba`, ветка `main`. Render прочитает `render.yaml`
+   и покажет два сервиса: `windrop-api` (web) и `windrop-provision-webhook` (cron).
+3. Apply. В форме Blueprint сразу заполни `sync: false` переменные:
+
+| Переменная | Значение |
+|---|---|
+| `DATABASE_URL` | DSN из Neon (**direct**, `?sslmode=require`) |
+| `REDIS_URL` | `rediss://…` из Upstash |
+| `BOT_TOKEN` | новый токен @robwindropbot из шага 4 |
+| `ADMIN_TELEGRAM_IDS` | твой Telegram ID (@userinfobot), через запятую если несколько |
+| `WEBAPP_URL` | `https://<project>.vercel.app/app/` — обязательно со слэшем на конце |
+| `CORS_ALLOW_ORIGINS` | `https://<project>.vercel.app` — без пути и без слэша |
+| `FERNET_KEY` | сгенерировать один раз: `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` |
+
+`JWT_SECRET` и `TELEGRAM_WEBHOOK_SECRET` Render сгенерирует сам (`generateValue`).
+`PUBLIC_BASE_URL` подставляется автоматически из адреса сервиса.
+
+`FERNET_KEY` — самый важный ключ: им зашифрованы токены managed-ботов, payload-ы inbox/outbox и
+коды gift-card. Потеря ключа делает бэкапы бесполезными, поэтому сохрани его в менеджере паролей.
+
+Дождись деплоя. Адрес API: `https://windrop-api.onrender.com` (если имя занято — Render добавит
+суффикс, тогда используй фактический адрес из dashboard).
+
+## 7. Подключить фронтенд к API
 
 `frontend/js/api-config.js`:
 
@@ -159,13 +170,6 @@ Commit + push в `main` → Vercel пересоберётся сам.
 Проверка: `https://<project>.vercel.app/app/` открывается без ошибок CORS в консоли.
 Если CORS ругается — сверь `CORS_ALLOW_ORIGINS` в Render с фактическим origin (схема+хост,
 без слэша); после правки Render перезапустит сервис.
-
-## 7. BotFather
-
-1. `/mybots` → `@robwindropbot` → **API Token** → **Revoke current token**.
-   Оба токена, которые присылались в чат, считаются скомпрометированными.
-2. Новый токен вставь **только** в Render env `BOT_TOKEN` (не в git, не в Vercel, не в Cloudflare).
-3. Включи Managed Bots для главного бота (`/managebots` либо Bot Settings → Managed Bots).
 
 ## 8. Webhook
 
