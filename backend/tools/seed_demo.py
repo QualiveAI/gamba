@@ -31,8 +31,17 @@ def get_dsn() -> str:
         raise SystemExit("Задайте DATABASE_URL явно; .env автоматически не читается")
     env = os.getenv("ENV", "dev").lower()
     parsed = urlsplit(dsn)
-    if env not in {"dev", "test"} and not parsed.path.endswith("_test"):
-        raise SystemExit("seed_demo разрешён только в dev/test или для *_test БД")
+    if (
+        env not in {"dev", "test"}
+        and not parsed.path.endswith("_test")
+        # Первичное наполнение production-каталога — осознанное действие оператора,
+        # поэтому нужен отдельный явный флаг, а не просто ENV=prod.
+        and os.getenv("WINDROP_SEED_ALLOW_PROD") != "1"
+    ):
+        raise SystemExit(
+            "seed_demo разрешён только в dev/test или для *_test БД; "
+            "для первичного наполнения production задайте WINDROP_SEED_ALLOW_PROD=1"
+        )
     return dsn
 
 
