@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     predictor_high_bet_threshold: int = 100
     predictor_sub_rtp_bonus: float = 0.02
     bot_pool_csv: str = ""
+    # Событийный worker: сигнал через Redis вместо опроса БД каждую секунду.
+    # Нужен для Neon free, где compute-часы считаются по времени активности.
+    bot_worker_event_wait: bool = False
+    bot_worker_rescan_seconds: int = Field(default=300, ge=30, le=3600)
     healthcheck_bot_token: str = ""
     healthcheck_target_chat_id: str = ""
 

@@ -1,31 +1,13 @@
-# Инфраструктура WINDROP как код для Render.
-# Секретов здесь нет: sync: false означает ручной ввод в dashboard после деплоя,
-# generateValue создаёт случайное значение сам Render и показывает его один раз.
-# Fernet-ключ сгенерировать externally нельзя (нужен валидный base64 32 байта),
-# поэтому он тоже sync: false.
+# Инфраструктура WINDROP как код для Render (Blueprint).
+# Секретов здесь нет: sync: false означает ручной ввод в dashboard, generateValue
+# создаёт случайное значение сам Render и показывает его один раз.
+#
+# PostgreSQL берётся внешний (Neon): Render free Postgres удаляется по retention,
+# поэтому databases: отсутствует, а DATABASE_URL вводится вручную.
+# Region согласован с Neon (Ohio), иначе каждый запрос к БД добавляет RTT.
 
-databases:
-  - name: windrop-db
-    databaseName: windrop
-    plan: free
-    # Free-план удаляется по истечению retention: nightly dump в R2 обязателен.
-
-services:
-  # Один сервис держит API + bot worker + scheduler: Render free даёт ~750 ч/мес
-  # на аккаунт, отдельные worker/scheduler удвоили бы потребление и ввели sleep.
-  - type: web
-    name: windrop-api
-    runtime: docker
-    plan: free
-    region: frankfurt
-    repo:
-      type: git
-      url: https://github.com/QualiveAI/gamba.git
-      branch: main
-    dockerfilePath: ./infra/Dockerfile.backend
-    dockerBuildContext: .
-    healthCheckPath: /health
-    autoDeploy: true
+envVarGroups:
+  - name: windrop-backend-env
     envVars:
       - key: ENV
         value: prod
@@ -45,35 +27,84 @@ services:
         value: "false"
       - key: MEDIA_STORAGE_MODE
         value: local
+      # Событийный worker: не опрашивать Neon вхолостую, чтобы compute засыпал.
+      - key: BOT_WORKER_EVENT_WAIT
+        value: "true"
+      - key: BOT_WORKER_RESCAN_SECONDS
+        value: "300"
       # Free-лимиты соединений: API 3 + worker 3 + scheduler 1.
       - key: DB_POOL_MIN_SIZE
         value: "0"
       - key: DB_POOL_MAX_SIZE
         value: "3"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: windrop-db
-          property: connectionString
-      - key: REDIS_URL
-        sync: false # external Redis (Upstash), rediss:// URL
-      - key: BOT_TOKEN
-        sync: false # только после revoke в @BotFather
       - key: BOT_USERNAME
         value: robwindropbot
+      - key: DATABASE_URL
+        sync: false # Neon DIRECT endpoint (не -pooler): scheduler держит advisory lock
+      - key: REDIS_URL
+        sync: false # Upstash rediss:// URL
+      - key: BOT_TOKEN
+        sync: false # только после revoke в @BotFather
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      - key: WEBAPP_URL
+        sync: false # https://<vercel-domain>/app/
+      - key: CORS_ALLOW_ORIGINS
+        sync: false # https://<vercel-domain> без пути и слэша
+      - key: FERNET_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+
+services:
+  # Один сервис держит API + bot worker + scheduler: Render free даёт ~750 ч/мес
+  # на аккаунт, отдельные worker/scheduler удвоили бы потребление.
+  - type: web
+    name: windrop-api
+    runtime: docker
+    plan: free
+    region: ohio
+    repo:
+      type: git
+      url: https://github.com/QualiveAI/gamba.git
+      branch: main
+    dockerfilePath: ./infra/Dockerfile.backend
+    dockerBuildContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVarGroups:
+      - windrop-backend-env
+    envVars:
       - key: PUBLIC_BASE_URL
         fromService:
           type: web
           name: windrop-api
           property: baseUrl
-      - key: WEBAPP_URL
-        sync: false # https://<vercel-domain>/app/
-      - key: CORS_ALLOW_ORIGINS
-        sync: false # https://<vercel-domain> без пути и слэша
-      - key: JWT_SECRET
-        generateValue: true
-      - key: FERNET_KEY
-        sync: false
-      - key: TELEGRAM_WEBHOOK_SECRET
-        generateValue: true
+
+  # У free-плана нет Shell, поэтому provisioning webhook выполняется этим job.
+  # `python -m app.bot.main` идемпотентен: upsert registry + setWebhook, без
+  # удаления updates и без polling. Запуск раз в сутки восстанавливает webhook,
+  # если его перебили извне; стоит секунды instance-time.
+  - type: cron
+    name: windrop-provision-webhook
+    runtime: docker
+    plan: free
+    region: ohio
+    schedule: "0 5 * * *"
+    repo:
+      type: git
+      url: https://github.com/QualiveAI/gamba.git
+      branch: main
+    dockerfilePath: ./infra/Dockerfile.backend
+    dockerBuildContext: .
+    dockerCommand: python -m app.bot.main
+    envVarGroups:
+      - windrop-backend-env
+    envVars:
+      - key: PUBLIC_BASE_URL
+        fromService:
+          type: web
+          name: windrop-api
+          property: baseUrl

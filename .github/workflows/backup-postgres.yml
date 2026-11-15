@@ -6,9 +6,10 @@ name: Backup PostgreSQL to R2
 #
 # Требуемые GitHub Secrets:
 #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
-#   AGE_PRIVATE_KEY   — приватная часть age-ключевой пары (для restore-drill)
+#   AGE_PRIVATE_KEY      — приватная часть age-ключевой пары (для restore-drill)
+#   DATABASE_URL_PROD    — DSN с паролем, поэтому именно secret, не variable
 # Required GitHub Variables:
-#   AGE_RECIPIENT_PUBLIC, DATABASE_URL_PROD
+#   AGE_RECIPIENT_PUBLIC
 #
 # infra/backup.sh остаётся путём оператора с pg_service; в CI DSN приходит
 # строкой, поэтому дамп делается inline с той же дисциплиной: plaintext на диск
@@ -42,13 +43,13 @@ jobs:
 
       - name: Validate inputs
         run: |
-          test -n "${{ vars.DATABASE_URL_PROD }}" || { echo "DATABASE_URL_PROD не задан"; exit 1; }
+          test -n "${{ secrets.DATABASE_URL_PROD }}" || { echo "DATABASE_URL_PROD не задан"; exit 1; }
           test -n "${{ vars.AGE_RECIPIENT_PUBLIC }}" || { echo "AGE_RECIPIENT_PUBLIC не задан"; exit 1; }
           test -n "${{ secrets.R2_BUCKET }}" || { echo "R2_BUCKET не задан"; exit 1; }
 
       - name: Encrypted logical dump
         env:
-          DATABASE_URL: ${{ vars.DATABASE_URL_PROD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
           AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT_PUBLIC }}
         run: |
           set -euo pipefail

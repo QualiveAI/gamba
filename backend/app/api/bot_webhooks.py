@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.bot.inbox import save_update
 from app.bot.pool import get_bot, trusted_main
 from app.bot.security import MAX_UPDATE_BYTES, BotSecurityError, secret_matches
+from app.bot.wakeup import notify_inbox
 from app.config import settings
 from app.db import get_conn
 
@@ -72,6 +73,8 @@ async def telegram_webhook(bot_id: int, request: Request):
             await save_update(conn, bot=current, update=update)
     except BotSecurityError:
         raise HTTPException(status_code=400, detail="invalid_update") from None
+    # Сигнал после commit: worker не опрашивает БД вхолостую (важно для Neon free).
+    await notify_inbox()
     # Транзакция и connection закрыты до 200; Telegram retry при DB failure безопасен.
     return {"ok": True}
 

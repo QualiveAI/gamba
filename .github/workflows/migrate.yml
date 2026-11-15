@@ -1,0 +1,57 @@
+name: Migrate production database
+
+# Нужен, потому что у Render free нет Shell. Запуск только вручную и только
+# после проверки: DDL не должен применяться сам при деплое приложения.
+#
+# GitHub Secrets: DATABASE_URL_PROD (DSN с паролем)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Введите MIGRATE, чтобы применить миграции'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Require explicit confirmation
+        if: inputs.confirm != 'MIGRATE'
+        run: |
+          echo "Подтверждение не введено (нужно MIGRATE). Миграции не применялись."
+          exit 1
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        working-directory: backend
+        run: python -m pip install -q -e .
+
+      - name: Show pending migrations (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+          ENV: prod
+        run: python tools/migrate.py --status | tail -25
+
+      - name: Apply migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PROD }}
+          ENV: prod
+        run: |
+          python tools/migrate.py
+          python tools/migrate.py --status | tail -5

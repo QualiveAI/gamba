@@ -13,6 +13,7 @@ from app.bot.notifications import DeliveryUnavailable, deliver_notification
 from app.bot.pool import get_bot
 from app.bot.queue import claim, fail, finish
 from app.bot.security import BotSecurityError, decrypt_secret
+from app.bot.wakeup import event_wait_enabled, wait_for_work
 from app.config import settings
 from app.db import close_pool, get_conn, init_pool
 
@@ -156,8 +157,21 @@ async def run_worker(*, stop: asyncio.Event | None = None, client=None):
     client = client or TelegramClient()
     loop = asyncio.get_running_loop()
     next_health = 0.0
+    # Событийный режим: не опрашивать БД на каждой итерации, чтобы Neon free мог
+    # засыпать. Периодический rescan подбирает задачи после сбоя Redis/рестарта.
+    event_wait = event_wait_enabled(settings)
+    rescan_seconds = max(30, int(getattr(settings, "bot_worker_rescan_seconds", 300)))
+    idle_rounds = 0
     try:
         while not stop.is_set():
+            if (
+                event_wait
+                and idle_rounds < max(1, rescan_seconds // 30)
+                and not await wait_for_work(30)
+            ):
+                idle_rounds += 1
+                continue
+            idle_rounds = 0
             try:
                 inbox_work = await process_inbox_one(client)
                 outbox_work = await process_outbox_one(client)
@@ -170,6 +184,8 @@ async def run_worker(*, stop: asyncio.Event | None = None, client=None):
                 logger.error("telegram_worker_iteration_failed code=worker_unavailable")
                 inbox_work = outbox_work = False
             if not inbox_work and not outbox_work:
+                if event_wait:
+                    idle_rounds += 1
                 with suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=1)
     finally:
