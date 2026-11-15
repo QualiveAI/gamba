@@ -54,7 +54,9 @@ for (const file of FILES) await copyFile(file);
 for (const dir of DIRS) await copyDir(dir);
 for (const asset of ASSETS) await copyFile(asset);
 
-// Функция /api/* компилируется Pages отдельно, в статику не попадает.
+// Pages Functions берутся платформой из functions/ корневого каталога проекта
+// (frontend/functions) — и при Git-интеграции, и при direct-upload, если wrangler
+// запускается из frontend/. В dist их копировать не нужно.
 const functionsSrc = path.join(root, 'functions');
 if (existsSync(functionsSrc)) {
   console.log('[build-pages] функции Pages: frontend/functions (собираются платформой)');

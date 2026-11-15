@@ -1,0 +1,60 @@
+name: Deploy Mini App to Cloudflare Pages
+
+# Статика Mini App собирается в frontend/dist и уезжает в Pages-проект windrop-app.
+# Functions (frontend/functions/api/[[path]].js) подхватываются автоматически:
+# wrangler запускается из frontend/, поэтому ./functions рядом.
+#
+# Нужны GitHub-секреты:
+#   CLOUDFLARE_API_TOKEN   — Account → Cloudflare Pages → Edit
+#   CLOUDFLARE_ACCOUNT_ID  — id аккаунта (Cloudflare dashboard → Workers & Pages)
+# Без них деплой завершится понятной ошибкой и ничего не сломает.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check credentials
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          test -n "$TOKEN" || { echo "CLOUDFLARE_API_TOKEN не задан"; exit 1; }
+          test -n "$ACCOUNT" || { echo "CLOUDFLARE_ACCOUNT_ID не задан"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build dist
+        working-directory: frontend
+        run: node build-pages.mjs
+
+      - name: Deploy to Pages
+        working-directory: frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 pages deploy dist \
+            --project-name windrop-app \
+            --branch main \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "$(git log -1 --pretty=%s)"

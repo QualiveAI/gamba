@@ -8,9 +8,9 @@ Vercel Hobby для gambling-проекта.
 Схема после переноса:
 
 ```
-Mini App: https://<project>.pages.dev/        ← Cloudflare Pages (статика)
-           https://<project>.pages.dev/api/*   ← Pages Function → https://windrop-api.onrender.com
-Render windrop-api                             ← API + worker + scheduler (источник истины)
+Mini App: https://windrop-app.pages.dev/          ← Cloudflare Pages (статика)
+          https://windrop-app.pages.dev/api/*     ← Pages Function → https://windrop-api.onrender.com
+Render windrop-api                                 ← API + worker + scheduler (источник истины)
 ```
 
 Статика и API живут на одном origin, поэтому CORS в браузере не участвует вовсе:
@@ -18,38 +18,41 @@ Render windrop-api                             ← API + worker + scheduler (и�
 `frontend/functions/api/[[path]].js` переадресует запрос в Render, сохраняя метод,
 тело и заголовок `Authorization`.
 
-## Создание проекта
+**Проект уже создан:** `windrop-app`, домен `https://windrop-app.pages.dev`,
+аккаунт Cloudflare `2710ede6f87b97565fc846d0d6ae2170`.
 
-1. dashboard.cloudflare.com → **Workers & Pages** → **Create application** → **Pages**
-   → **Connect to Git** → GitHub → репозиторий **`QualiveAI/gamba`** → ветка `production`?
-   — нет, **`main`** → **Create**.
-   Репозиторий приватный: если Cloudflare его не показывает, открой настройки GitHub-приложения
-   Cloudflare (github.com/settings/installations) и выдай ему доступ к `QualiveAI/gamba`.
-2. Build settings у проекта:
+## Как деплоить
 
-   | Параметр | Значение |
-   |---|---|
-   | Framework preset | None |
-   | Root directory | `frontend` |
-   | Build command | `node build-pages.mjs` |
-   | Build output directory | `dist` |
-   | Environment variables | пусто (секретов на статике не бывает) |
+**Автоматически (штатный путь):** workflow `.github/workflows/deploy-pages.yml`
+на каждый push в `main`, если менялся `frontend/**`. Нужны GitHub-секреты:
 
-   Build command обязателен: в `frontend/` лежат node_modules, скриншоты и ~300 МБ
-   экспериментальных ассетов, а Pages принимает только собранный `dist/` (4–5 МБ).
-3. **Save and Deploy**. Домен проекта: `https://<project>.pages.dev` — его и укажи
-   в Render (`WEBAPP_URL`) и пришли сюда.
+| Секрет | Где взять |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create Token → шаблон **Edit Cloudflare Workers** или свой: Account → **Cloudflare Pages: Edit** |
+| `CLOUDFLARE_ACCOUNT_ID` | `2710ede6f87b97565fc846d0d6ae2170` (Cloudflare → Workers & Pages, справа) |
+
+Пока секретов нет, workflow просто упадёт на первой проверке и ничего не сломает.
+
+**Вручную** (если нужно залить прямо сейчас):
+
+```bash
+cd frontend
+node build-pages.mjs
+wrangler pages deploy dist --project-name windrop-app --branch main
+```
+
+**Ловушка:** wrangler обязательно запускать из `frontend/`. Если запустить из корня
+репозитория, статика уедет, а Functions — нет: `/api/*` начнёт отдавать `index.html`
+вместо ответа API. Признак успеха в выводе — строка `✨ Uploading Functions bundle`.
 
 ## Проверка
 
 | Что | Ожидание |
 |---|---|
-| `https://<project>.pages.dev/` | открывается Mini App (вне Telegram покажет требование открыть из Telegram) |
-| `https://<project>.pages.dev/api/health` | `{"status":"ok","db":"ok","schema":"ok","outbox":"ok","redis":"ok"}` — функция проксирует Render |
-| `https://<project>.pages.dev/api/health/live` | `{"status":"ok"}` |
-
-`/api/health` — самая честная проверка: она доказывает, что статика, функция и Render
-говорят друг с другом.
+| `https://windrop-app.pages.dev/` | открывается Mini App (вне Telegram — требование открыть из Telegram) |
+| `https://windrop-app.pages.dev/api/health` | `{"status":"ok","db":"ok","schema":"ok","outbox":"ok","redis":"ok"}` |
+| `https://windrop-app.pages.dev/api/meta/tenant` | JSON с tenant/brand — значит прокси ходит в Render |
+| тот же путь с `Origin: https://evil.example` | `403 origin_not_allowed` |
 
 ## Что где лежит
 
@@ -58,9 +61,14 @@ Render windrop-api                             ← API + worker + scheduler (и�
 | `frontend/build-pages.mjs` | сборка `frontend/dist/` для Pages (без зависимостей, только Node) |
 | `frontend/functions/api/[[path]].js` | Pages Function: `/api/*` → Render API, с CORS и таймаутом |
 | `frontend/js/api-config.js` | публичный origin API для Mini App (тот же origin + `/api`) |
+| `.github/workflows/deploy-pages.yml` | автодеплой статики на Pages при push в `main` |
 
 Upstream функции задан константой `UPSTREAM_ORIGIN` в `frontend/functions/api/[[path]].js`.
 Если адрес Render поменяется — правится там же и в `render.yaml`.
+
+Git-интеграция Pages (альтернатива автодеплою из Actions) тоже поддерживается:
+Root directory `frontend`, Build command `node build-pages.mjs`, Build output `dist`,
+Functions подхватываются из `frontend/functions` автоматически.
 
 ## Ограничения
 
