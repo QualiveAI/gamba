@@ -120,6 +120,16 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-    except Exception:
-        logger.error("telegram_main_stopped code=bot_startup_failed")
+    except BotSecurityError as exc:
+        # Сообщения BotSecurityError формирует только наш код — это машинные коды,
+        # не содержащие токенов и payload.
+        logger.error("telegram_main_stopped code=%s", str(exc))
+        raise SystemExit(1) from None
+    except TelegramAPIError as exc:
+        # code — машинный код ответа Telegram (unauthorized, invalid_token, ...).
+        logger.error("telegram_main_stopped code=%s", exc.code)
+        raise SystemExit(1) from None
+    except Exception as exc:
+        # repr/traceback не выводим: они могут содержать request/response/payload.
+        logger.error("telegram_main_stopped code=%s", type(exc).__name__.lower())
         raise SystemExit(1) from None
