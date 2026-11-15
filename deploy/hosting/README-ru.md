@@ -75,9 +75,9 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 - CLI Upstash показывает команду вида `redis-cli --tls -u redis://…`. Схема `redis://` там только
   потому, что TLS включает флаг `--tls`; приложению нужен именно **`rediss://`**, иначе клиент
   пойдёт открытым текстом и получит таймаут.
-- Регион базы должен быть **us-east-1**, иначе каждый Redis-запрос идёт через полмира
-  (флаги и кэш каталога читаются на каждом запросе API). Если база уже создана в другом
-  регионе — удали и создай заново, данных там нет.
+- Регион базы должен совпадать с Render — **us-east-2 (Ohio)**; «Global» с primary в us-east-2
+  тоже подходит. Иначе каждый Redis-запрос идёт через полмира (флаги и кэш каталога читаются
+  на каждом запросе API). Если база создана в другом регионе — удали и создай заново, данных там нет.
 
 ## 3. Vercel
 
@@ -154,12 +154,12 @@ grep '^# public key:' windrop-backup.key    # → AGE_RECIPIENT_PUBLIC
 | `REDIS_URL` | `rediss://…` из Upstash |
 | `BOT_TOKEN` | новый токен @robwindropbot из шага 4 |
 | `ADMIN_TELEGRAM_IDS` | твой Telegram ID (@userinfobot), через запятую если несколько |
+| `PUBLIC_BASE_URL` | `https://windrop-api.onrender.com` — нужен и web, и cron: у cron нет своего URL, он ставит webhook на этот адрес |
 | `WEBAPP_URL` | `https://<project>.vercel.app/app/` — обязательно со слэшем на конце |
 | `CORS_ALLOW_ORIGINS` | `https://<project>.vercel.app` — без пути и без слэша |
 | `FERNET_KEY` | сгенерировать один раз: `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"` |
 
 `JWT_SECRET` и `TELEGRAM_WEBHOOK_SECRET` Render сгенерирует сам (`generateValue`).
-`PUBLIC_BASE_URL` подставляется автоматически из адреса сервиса.
 
 `FERNET_KEY` — самый важный ключ: им зашифрованы токены managed-ботов, payload-ы inbox/outbox и
 коды gift-card. Потеря ключа делает бэкапы бесполезными, поэтому сохрани его в менеджере паролей.

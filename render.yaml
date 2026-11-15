@@ -5,6 +5,11 @@
 # PostgreSQL берётся внешний (Neon): Render free Postgres удаляется по retention,
 # поэтому databases: отсутствует, а DATABASE_URL вводится вручную.
 # Region согласован с Neon (Ohio), иначе каждый запрос к БД добавляет RTT.
+#
+# Схема Render Blueprint: repo — строка URL, branch — отдельное поле, контекст
+# сборки называется dockerContext, а группа переменных подключается через
+# envVars: - fromGroup (поля repo:{...}, dockerBuildContext и envVarGroups
+# внутри сервиса схемой не являются).
 
 envVarGroups:
   - name: windrop-backend-env
@@ -47,6 +52,10 @@ envVarGroups:
         sync: false # только после revoke в @BotFather
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      # Адрес публичного API. Нужен и web-сервису, и cron: cron не имеет своего
+      # URL, поэтому берёт этот, чтобы поставить webhook на windrop-api.
+      - key: PUBLIC_BASE_URL
+        sync: false # https://windrop-api.onrender.com
       - key: WEBAPP_URL
         sync: false # https://<vercel-domain>/app/
       - key: CORS_ALLOW_ORIGINS
@@ -66,22 +75,14 @@ services:
     runtime: docker
     plan: free
     region: ohio
-    repo:
-      type: git
-      url: https://github.com/QualiveAI/gamba.git
-      branch: main
+    repo: https://github.com/QualiveAI/gamba
+    branch: main
     dockerfilePath: ./infra/Dockerfile.backend
-    dockerBuildContext: .
+    dockerContext: .
     healthCheckPath: /health
     autoDeploy: true
-    envVarGroups:
-      - windrop-backend-env
     envVars:
-      - key: PUBLIC_BASE_URL
-        fromService:
-          type: web
-          name: windrop-api
-          property: baseUrl
+      - fromGroup: windrop-backend-env
 
   # У free-плана нет Shell, поэтому provisioning webhook выполняется этим job.
   # `python -m app.bot.main` идемпотентен: upsert registry + setWebhook, без
@@ -93,18 +94,10 @@ services:
     plan: free
     region: ohio
     schedule: "0 5 * * *"
-    repo:
-      type: git
-      url: https://github.com/QualiveAI/gamba.git
-      branch: main
+    repo: https://github.com/QualiveAI/gamba
+    branch: main
     dockerfilePath: ./infra/Dockerfile.backend
-    dockerBuildContext: .
+    dockerContext: .
     dockerCommand: python -m app.bot.main
-    envVarGroups:
-      - windrop-backend-env
     envVars:
-      - key: PUBLIC_BASE_URL
-        fromService:
-          type: web
-          name: windrop-api
-          property: baseUrl
+      - fromGroup: windrop-backend-env
