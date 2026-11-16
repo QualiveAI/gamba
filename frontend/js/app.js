@@ -758,7 +758,9 @@ function vProfile() {
  <div class="days">${Array.from({ length: 7 }, (_, k) => {
     const date = new Date(Date.now() - (6 - k) * 864e5).toISOString().slice(0, 10);
     const got = done.includes(date);
-    return `<div class="d ${got ? 'got' : ''} ${k === 6 && can ? 'next' : ''}"><small>Dia ${k + 1}</small>${got ? icon('check') : coin('copper')}<b>500</b></div>`;
+    const today = k === 6;
+    const label = today ? 'Hoje' : `Dia ${k + 1}`;
+    return `<div class="d ${got ? 'got' : ''} ${today ? 'today' : ''} ${today && can ? 'next' : ''}"><small>${label}</small>${got ? icon('check') : coin('copper')}<b>500</b></div>`;
   }).join('')}</div>
  <p class="hint">Todo dia: +500 🥉. 7 dias seguidos liberam a Caixa Semanal, 30 dias — a Mensal. Pular um dia zera a série.</p>
  <button class="cta" data-claim ${can ? '' : 'disabled'}>${can ? 'Check-in' : 'Já fez hoje — volte amanhã'}</button></section>
