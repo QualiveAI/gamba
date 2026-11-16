@@ -7,8 +7,9 @@ from app.bot.security import BotSecurityError, decrypt_secret
 from app.config import settings
 
 COMMANDS = [
-    {"command": "start", "description": "Abrir a WINDROP"},
+    {"command": "start", "description": "Começar na WINDROP"},
     {"command": "menu", "description": "Ver o menu"},
+    {"command": "deposit", "description": "Adicionar Coins"},
     {"command": "balance", "description": "Consultar Coins e bônus"},
     {"command": "withdraw", "description": "Trocar Coins por gift cards"},
     {"command": "mycards", "description": "Ver meus gift cards"},
@@ -66,8 +67,13 @@ async def configure_bot(client, *, bot: dict, token: str, webhook: bool = True):
             token,
             "setMyDescription",
             language_code=language,
-            description="WINDROP: abra o aplicativo, acompanhe seus Coins e troque por gift cards. "
-            "Pagamentos e suporte são tratados pelo bot principal oficial.",
+            description=(
+                "WINDROP oficial: aqui você adiciona Coins por Telegram Stars e cria seu bot "
+                "pessoal para jogar. Gift cards e suporte no bot pessoal ou em /support."
+                if bot["kind"] == "main"
+                else "WINDROP: abra o aplicativo, acompanhe seus Coins e troque por gift cards. "
+                "Pagamentos e suporte são tratados pelo bot principal oficial."
+            ),
         )
         await client.call(
             token,
@@ -75,15 +81,20 @@ async def configure_bot(client, *, bot: dict, token: str, webhook: bool = True):
             language_code=language,
             short_description="WINDROP | Coins, recompensas e gift cards. Suporte: /support",
         )
-    await client.call(
-        token,
-        "setChatMenuButton",
-        menu_button={
-            "type": "web_app",
-            "text": "Abrir WINDROP",
-            "web_app": {"url": webapp_url(bot)},
-        },
-    )
+    # Mini App есть только у личного бота. Главный бот работает как чат:
+    # онбординг, пополнение Stars, поддержка — и никаких web_app кнопок.
+    if bot["kind"] == "main":
+        await client.call(token, "setChatMenuButton", menu_button={"type": "commands"})
+    else:
+        await client.call(
+            token,
+            "setChatMenuButton",
+            menu_button={
+                "type": "web_app",
+                "text": "Abrir WINDROP",
+                "web_app": {"url": webapp_url(bot)},
+            },
+        )
     if webhook:
         base = _https_url(getattr(settings, "public_base_url", "")).rstrip("/")
         parsed = urlsplit(base)

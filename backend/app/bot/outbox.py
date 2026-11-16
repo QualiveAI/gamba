@@ -60,6 +60,7 @@ def validate_payload(kind: str, payload: dict):
             "start",
             "menu",
             "balance",
+            "deposit",
             "withdraw",
             "support",
             "paysupport",

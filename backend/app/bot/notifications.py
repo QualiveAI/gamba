@@ -10,6 +10,10 @@ from app.bot.security import BotSecurityError, decrypt_secret, positive_id
 from app.bot.setup import main_bot_link, webapp_keyboard
 from app.config import settings
 from app.db import get_conn
+from app.payments.stars import create_invoice_for_intent
+from core.contracts.payment import PaymentError
+from core.payments.intents import create_intent as create_payment_intent
+from core.payments.quotes import create_quote
 
 
 class DeliveryUnavailable(RuntimeError):
@@ -279,6 +283,80 @@ async def _managed_message(conn, *, user: dict, bot: dict, template: str) -> dic
     return {"text": "\n".join(lines)}
 
 
+def _deposit_deep_link() -> str | None:
+    username = getattr(settings, "bot_username", "").lstrip("@")
+    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+        return None
+    return f"https://t.me/{username}?start=deposit"
+
+
+def _coins_label(coins: int) -> str:
+    return f"{coins:,}".replace(",", ".")
+
+
+async def _deposit_intent(conn, *, user: dict, coins: int):
+    """Живой intent на эту сумму переиспользуем: /deposit не плодит счета."""
+    row = await (
+        await conn.execute(
+            "SELECT id FROM payment_intents WHERE user_id = %s AND method = 'stars' "
+            "AND status = 'pending' AND coins = %s AND expires_at > now() "
+            "ORDER BY created_at DESC LIMIT 1",
+            (user["id"], coins),
+        )
+    ).fetchone()
+    if row:
+        return row["id"]
+    quote = await create_quote(conn, user=user, coins=coins, method="stars")
+    intent = await create_payment_intent(
+        conn=conn,
+        user=user,
+        tenant="default",
+        quote_id=quote.id,
+        idempotency_key=f"bot-deposit-{quote.id}",
+    )
+    return intent.id
+
+
+async def _deposit_message(conn, *, user: dict, bot: dict) -> dict:
+    """Пополнение прямо в чате: Mini App для этого не нужен."""
+    if bot["kind"] != "main":
+        link = main_bot_link()
+        result = {
+            "text": "Adicionar Coins é feito no bot principal oficial, por Telegram Stars. "
+            "Os Coins caem na mesma conta."
+        }
+        if link:
+            result["reply_markup"] = {
+                "inline_keyboard": [[{"text": "Bot principal", "url": link}]]
+            }
+        return result
+    rows = []
+    for coins in getattr(settings, "deposit_presets_list", []):
+        try:
+            intent_id = await _deposit_intent(conn, user=user, coins=coins)
+            invoice = await create_invoice_for_intent(conn, user=user, intent_id=intent_id)
+        except PaymentError:
+            continue
+        link = invoice.get("invoice_link")
+        if not link:
+            continue
+        stars = invoice.get("stars_amount") or invoice.get("provider_amount_atomic")
+        label = f"{_coins_label(coins)} Coins" + (f" — {stars} ⭐" if stars else "")
+        rows.append([{"text": label, "url": link}])
+    if not rows:
+        return {
+            "text": "Pagamentos estão desativados no momento. Tente mais tarde ou use /support."
+        }
+    return {
+        "text": (
+            "Adicionar Coins com Telegram Stars.\n"
+            "O Telegram confirma o pagamento, e os Coins caem na conta na hora.\n"
+            "Escolha o pacote:"
+        ),
+        "reply_markup": {"inline_keyboard": rows},
+    }
+
+
 async def _command_message(conn, *, job: dict, user: dict, bot: dict) -> tuple[dict, bool]:
     template = job["payload"]["template"]
     if template in {
@@ -291,12 +369,22 @@ async def _command_message(conn, *, job: dict, user: dict, bot: dict) -> tuple[d
         "disabled",
     }:
         return await _managed_message(conn, user=user, bot=bot, template=template), False
+    if template == "deposit":
+        return await _deposit_message(conn, user=user, bot=bot), False
     if template == "balance":
-        return {
+        result = {
             "text": f"Seus Coins: {user['balance_units']}\n"
             f"Bônus para jogar: {user['balance_freebets']}\n"
             "Bônus não podem ser trocados por gift cards."
-        }, False
+        }
+        if bot["kind"] == "main":
+            # Пополнение живёт в главном боте, поэтому кнопка ведёт на /deposit.
+            deep = _deposit_deep_link()
+            if deep:
+                result["reply_markup"] = {
+                    "inline_keyboard": [[{"text": "Adicionar Coins", "url": deep}]]
+                }
+        return result, False
     if template in {"support", "paysupport"}:
         username = getattr(settings, "support_username", "").lstrip("@")
         contact = (
@@ -315,12 +403,49 @@ async def _command_message(conn, *, job: dict, user: dict, bot: dict) -> tuple[d
             )
         return {"text": text}, False
     if template == "withdraw":
+        if bot["kind"] == "main":
+            # Mini App живёт только в личном боте: здесь только дорога туда.
+            personal = await _active_personal_bot(conn, user=user)
+            if personal:
+                return {
+                    "text": "A troca de Coins por gift cards acontece no seu bot pessoal.",
+                    "reply_markup": {
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "Abrir meu bot",
+                                    "url": f"https://t.me/{personal['username']}",
+                                }
+                            ]
+                        ]
+                    },
+                }, False
+            return {
+                "text": "Crie seu bot pessoal com /start e troque Coins por gift cards lá."
+            }, False
         return {
             "text": "Troque seus Coins por gift cards disponíveis no catálogo. "
             "Confira região, nominal e custo antes de confirmar. Não é saque em dinheiro.",
             "reply_markup": webapp_keyboard(bot, "withdraw"),
         }, False
     if template == "mycards":
+        if bot["kind"] == "main":
+            personal = await _active_personal_bot(conn, user=user)
+            if personal:
+                return {
+                    "text": "Seus gift cards e os códigos ficam no seu bot pessoal.",
+                    "reply_markup": {
+                        "inline_keyboard": [
+                            [
+                                {
+                                    "text": "Abrir meu bot",
+                                    "url": f"https://t.me/{personal['username']}",
+                                }
+                            ]
+                        ]
+                    },
+                }, False
+            return {"text": "Crie seu bot pessoal com /start para receber gift cards."}, False
         try:
             service = optional_service("app.giftcards.service", "list_owned_cards", "get_my_card")
         except FeatureUnavailable:
@@ -372,7 +497,10 @@ async def _command_message(conn, *, job: dict, user: dict, bot: dict) -> tuple[d
         return {"text": "\n".join(lines)}, False
     text = "Bem-vindo à WINDROP! Acompanhe seus Coins, jogue e troque recompensas por gift cards."
     if template == "menu":
-        text = "Menu WINDROP: /balance · /withdraw · /mycards · /mybot · /support · /paysupport"
+        text = "Menu WINDROP: /deposit · /balance · /mybot · /support · /paysupport"
+    if bot["kind"] == "main":
+        # Mini App в главном боте не показываем вовсе — только в личном.
+        return {"text": text}, False
     return {"text": text, "reply_markup": webapp_keyboard(bot)}, False
 
 

@@ -236,7 +236,16 @@ async def dispatch_update(client, *, bot: dict, update: dict):
         template = (
             command
             if command
-            in {"start", "menu", "balance", "withdraw", "support", "paysupport", "mycards"}
+            in {
+                "start",
+                "menu",
+                "balance",
+                "deposit",
+                "withdraw",
+                "support",
+                "paysupport",
+                "mycards",
+            }
             else "menu"
         )
         if command == "start" and current["kind"] == "main":
@@ -245,6 +254,9 @@ async def dispatch_update(client, *, bot: dict, update: dict):
             )
             if arg == "managed":
                 template = "managed"
+            elif arg == "deposit":
+                # Deep link с кнопки «Adicionar Coins» в /balance.
+                template = "deposit"
         if command in {"mybot", "createbot", "reconnectbot", "revokebot"}:
             template = "managed"
             if command != "mybot" and current["kind"] == "main":

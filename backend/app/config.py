@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     payment_fee_percent: Decimal = Field(default=Decimal("20"), ge=0, le=100)
     stars_usd_price: Decimal = Field(default=Decimal("0.02"), gt=0)
     quote_ttl_seconds: int = Field(default=900, ge=30, le=3600)
+    # Пакеты пополнения для кнопок в боте: главный бот продаёт Stars-инвойсы
+    # прямо в чате, без Mini App.
+    deposit_presets: str = "1000,5000,10000"
     treasury_asset: str = ""
     treasury_network: str = ""
     treasury_address: str = ""
@@ -163,6 +166,20 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Точный allowlist origins; пусто = same-origin deployment без CORS."""
         return [part.strip() for part in self.cors_allow_origins.split(",") if part.strip()]
+
+    @property
+    def deposit_presets_list(self) -> list[int]:
+        """Пакеты пополнения: только целые положительные, без дублей, максимум 6 кнопок."""
+        out: list[int] = []
+        for part in self.deposit_presets.split(","):
+            part = part.strip()
+            if not part.isdigit():
+                continue
+            coins = int(part)
+            if coins <= 0 or coins in out or coins > self.payments_max_coins:
+                continue
+            out.append(coins)
+        return out[:6]
 
     @property
     def admin_ids(self) -> set[int]:
