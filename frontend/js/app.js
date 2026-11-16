@@ -16,6 +16,8 @@ const tierRank = id => TIER_ORDER.indexOf(id);
 const coin = (c = 'gold') => `<span class="coin ${c === 'copper' ? 'copper' : ''}" aria-hidden="true"></span>`;
 const cur = c => c === 'freebets' ? 'cobre' : 'ouro';
 const money = (n, c = 'gold') => `${coin(c)}${fmt(n)}`;
+// Кейс за cobre показывает бронзовую монетку, а не золотую.
+const itemCoin = i => coin(i && (i.caseCurrency === 'freebets' || i.currency === 'freebets') ? 'copper' : 'gold');
 const img = (src, alt) => src ? `<img src="${esc(src)}" alt="${esc(alt)}" decoding="async" loading="lazy">` : '<span class="ph"></span>';
 document.addEventListener('error', e => { if (e.target.tagName === 'IMG') e.target.classList.add('broken') }, true);
 
@@ -274,7 +276,7 @@ function vCases() {
 }
 const itemCard = (i, extra = '') => {
   const t = TIERS[i.tier] || TIERS.common;
-  return `<div class="item" style="--r:${t.color};--rs:${t.soft}"><div class="item-img">${img(i.image, i.name)}</div><div class="item-body"><span class="tier">${t.name}</span><b>${esc(i.name)}</b><span class="val">${coin()}${fmt(i.value)}</span>${extra}</div></div>`;
+  return `<div class="item" style="--r:${t.color};--rs:${t.soft}"><div class="item-img">${img(i.image, i.name)}</div><div class="item-body"><span class="tier">${t.name}</span><b>${esc(i.name)}</b><span class="val">${itemCoin(i)}${fmt(i.value)}</span>${extra}</div></div>`;
 };
 function vCase(id) {
   const c = CASE(id);
@@ -310,6 +312,7 @@ async function openCase(id) {
   const win = {
     name: res.item, tier: res.rarity && TIERS[res.rarity] ? res.rarity : 'common',
     image: res.image, value: res.nominal_units, chance: res.chance_pct,
+    currency: c.currency || 'units',
   };
   // рулетка: 44 ячейки, выигрыш под указателем
   const N = 44, K = N - 6, cells = [];
@@ -334,8 +337,8 @@ async function openCase(id) {
 }
 function winModal(i, invItem) {
   const t = TIERS[i.tier] || TIERS.common;
-  const sellBtn = invItem ? `<button class="ghost" data-sell="${invItem.id}">Vender por ${money(i.value)}</button>` : '';
-  modal(`<div class="win" style="--r:${t.color};--rs:${t.soft}"><span class="tier">${t.name}</span><div class="win-img">${img(i.image, i.name)}</div><h2>${esc(i.name)}</h2><p class="val">${coin()}${fmt(i.value)} ouro</p>
+  const sellBtn = invItem ? `<button class="ghost" data-sell="${invItem.id}">Vender por ${money(i.value, i.currency)}</button>` : '';
+  modal(`<div class="win" style="--r:${t.color};--rs:${t.soft}"><span class="tier">${t.name}</span><div class="win-img">${img(i.image, i.name)}</div><h2>${esc(i.name)}</h2><p class="val">${itemCoin(i)}${fmt(i.value)} ${i.currency === 'freebets' ? 'cobre' : 'ouro'}</p>
  <div class="row">${sellBtn}<button class="cta" data-close>Para a Mochila</button></div></div>`);
   setTimeout(() => {
     const e = $('.win-img');
@@ -372,8 +375,8 @@ function catalogTargets(sel) {
   return out.sort((a, b) => a.value - b.value).slice(0, 30);
 }
 const chanceOf = (a, b) => Math.min(80, Math.max(1, a.value / b.value * 80));
-const miniCard = i => `<div class="mini" style="--r:${(TIERS[i.tier] || TIERS.common).color}">${img(i.image, i.name)}<b>${esc(i.name)}</b><span>${coin()}${fmt(i.value)}</span></div>`;
-const pickCard = (i, attr, val, on) => `<button class="pick ${on ? 'on' : ''}" ${attr}="${val}" style="--r:${(TIERS[i.tier] || TIERS.common).color}">${img(i.image, i.name)}<b>${esc(i.name)}</b><span>${coin()}${fmt(i.value)}</span></button>`;
+const miniCard = i => `<div class="mini" style="--r:${(TIERS[i.tier] || TIERS.common).color}">${img(i.image, i.name)}<b>${esc(i.name)}</b><span>${itemCoin(i)}${fmt(i.value)}</span></div>`;
+const pickCard = (i, attr, val, on) => `<button class="pick ${on ? 'on' : ''}" ${attr}="${val}" style="--r:${(TIERS[i.tier] || TIERS.common).color}">${img(i.image, i.name)}<b>${esc(i.name)}</b><span>${itemCoin(i)}${fmt(i.value)}</span></button>`;
 function vUpgrade() {
   const list = mine(), sel = list.find(i => i.id === upSel);
   const tgt = sel && upTarget && upTarget.value > sel.value ? upTarget : null;

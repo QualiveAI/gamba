@@ -19,6 +19,9 @@ COMMANDS = [
     {"command": "createbot", "description": "Autorizar a criação oficial de um bot"},
     {"command": "reconnectbot", "description": "Autorizar a reconexão de um bot"},
     {"command": "revokebot", "description": "Revogar o acesso de um bot pessoal"},
+    {"command": "grant", "description": "Conceder acesso de demonstração"},
+    {"command": "revoke", "description": "Revogar acesso de demonstração"},
+    {"command": "topup", "description": "Adicionar Coins de demonstração"},
 ]
 
 
@@ -58,7 +61,8 @@ async def configure_bot(client, *, bot: dict, token: str, webhook: bool = True):
         else [
             command
             for command in COMMANDS
-            if command["command"] not in {"createbot", "reconnectbot", "revokebot"}
+            if command["command"]
+            not in {"createbot", "reconnectbot", "revokebot", "grant", "revoke", "topup"}
         ]
     )
     for language in ("", "pt"):

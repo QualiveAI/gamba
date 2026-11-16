@@ -355,8 +355,24 @@ async def _deposit_message(conn, *, user: dict, bot: dict) -> dict:
     }
 
 
+def _admin_topup_message(payload: dict) -> dict:
+    action = payload.get("action")
+    if action == "credited":
+        name = "ouro" if payload.get("currency") == "units" else "cobre"
+        return {
+            "text": f"Crédito de demonstração adicionado: +{payload['amount']} {name}. /balance"
+        }
+    if action == "granted":
+        return {"text": f"Acesso de demonstração concedido para o ID {payload['target']}."}
+    if action == "revoked":
+        return {"text": f"Acesso de demonstração revogado para o ID {payload['target']}."}
+    return {"text": "Sem permissão para ações de administração. /support"}
+
+
 async def _command_message(conn, *, job: dict, user: dict, bot: dict) -> tuple[dict, bool]:
     template = job["payload"]["template"]
+    if template == "admin_topup":
+        return _admin_topup_message(job["payload"]), False
     if template in {
         "start",
         "menu",

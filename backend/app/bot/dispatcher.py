@@ -3,6 +3,7 @@
 import importlib
 import re
 
+from app.bot.demo_admins import demo_admin_ids, grant_demo_admin, revoke_demo_admin
 from app.bot.inbox import event_allowed
 from app.bot.outbox import enqueue
 from app.bot.pool import (
@@ -20,6 +21,7 @@ from app.bot.setup import configure_bot
 from app.bot.users import apply_start_attribution, ensure_telegram_user
 from app.config import settings
 from app.db import get_conn
+from core.engine.ledger.ledger import post_entry
 
 
 class FeatureUnavailable(RuntimeError):
@@ -28,6 +30,50 @@ class FeatureUnavailable(RuntimeError):
 
 class SettlementDeferred(RuntimeError):
     pass
+
+
+async def _admin_command(conn, *, command: str, arg: str, user: dict, sender_telegram_id: int):
+    """/grant, /revoke, /topup: демо-доступ для записи роликов.
+
+    Выдавать доступ могут только корневые админы (ADMIN_TELEGRAM_IDS).
+    Накрутку может делать корневой админ или тот, кому выдали demo-доступ.
+    Любое отсутствие прав — обычный вежливый отказ, а не исключение.
+    """
+    denied = {"action": "denied"}
+    is_root = sender_telegram_id in getattr(settings, "admin_ids", set())
+    if command in {"grant", "revoke"} and not is_root:
+        return "admin_topup", denied
+    if command == "topup" and not (is_root or sender_telegram_id in await demo_admin_ids(conn)):
+        return "admin_topup", denied
+
+    if command in {"grant", "revoke"}:
+        if not re.fullmatch(r"[1-9][0-9]{0,18}", arg):
+            return "admin_topup", denied
+        target_id = int(arg)
+        if command == "grant":
+            await grant_demo_admin(conn, target_id)
+            return "admin_topup", {"action": "granted", "target": str(target_id)}
+        await revoke_demo_admin(conn, target_id)
+        return "admin_topup", {"action": "revoked", "target": str(target_id)}
+
+    parts = arg.split()
+    if not parts or not parts[0].isdigit():
+        return "admin_topup", denied
+    amount = int(parts[0])
+    if not 1 <= amount <= 1_000_000:
+        return "admin_topup", denied
+    currency = "freebets" if len(parts) > 1 and parts[1].lower() == "cobre" else "units"
+    if len(parts) > 1 and parts[1].lower() not in {"ouro", "cobre"}:
+        return "admin_topup", denied
+    await post_entry(
+        conn,
+        user_id=user["id"],
+        currency=currency,
+        delta=amount,
+        reason="demo_topup",
+        ref_id=f"bot-topup:{user['telegram_id']}",
+    )
+    return "admin_topup", {"action": "credited", "amount": amount, "currency": currency}
 
 
 def optional_service(module: str, *names: str):
@@ -282,6 +328,23 @@ async def dispatch_update(client, *, bot: dict, update: dict):
                             conn, bot_id=personal_id, owner_telegram_id=sender["id"]
                         )
                         template = "managed_revoke"
+        if command in {"grant", "revoke", "topup"} and current["kind"] == "main":
+            # Демо-доступ для записи роликов: /grant даёт право, /topup накручивает
+            # Coins самому себе. Баланс идёт только через ledger (reason=demo_topup).
+            template, extra = await _admin_command(
+                conn, command=command, arg=arg, user=user, sender_telegram_id=sender["id"]
+            )
+            payload = {"template": template, "credential_version": current["credential_version"]}
+            payload.update(extra)
+            await enqueue(
+                conn,
+                kind="bot_message",
+                user_id=user["id"],
+                bot_id=current["bot_id"],
+                payload=payload,
+                dedupe_key=f"command:{current['bot_id']}:{update['update_id']}",
+            )
+            return
         payload = {"template": template, "credential_version": current["credential_version"]}
         if command == "mycards" and re.fullmatch(r"[1-9][0-9]{0,18}", arg):
             redemption_id = int(arg)

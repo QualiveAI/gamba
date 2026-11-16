@@ -70,15 +70,36 @@ def validate_payload(kind: str, payload: dict):
             "managed_revoke",
             "disabled",
             "managed_ready",
+            "admin_topup",
         }
         base_keys = {"template", "credential_version"}
-        allowed_keys = (
-            base_keys | {"redemption_id"} if payload.get("template") == "mycards" else base_keys
-        )
+        if payload.get("template") == "mycards":
+            allowed_keys = base_keys | {"redemption_id"}
+        elif payload.get("template") == "admin_topup":
+            allowed_keys = base_keys | {"action", "amount", "currency", "target"}
+        else:
+            allowed_keys = base_keys
         if not base_keys <= set(payload) <= allowed_keys or payload["template"] not in templates:
             raise BotSecurityError("outbox_payload_invalid")
         if "redemption_id" in payload and not positive_id(payload["redemption_id"]):
             raise BotSecurityError("outbox_payload_invalid")
+        if payload.get("template") == "admin_topup":
+            action = payload.get("action")
+            if action not in {"denied", "credited", "granted", "revoked"}:
+                raise BotSecurityError("outbox_payload_invalid")
+            if action == "credited":
+                if not positive_id(payload.get("amount")) or payload.get("currency") not in (
+                    "units",
+                    "freebets",
+                ):
+                    raise BotSecurityError("outbox_payload_invalid")
+            elif action in {"granted", "revoked"}:
+                if not isinstance(payload.get("target"), str) or not re.fullmatch(
+                    r"[1-9][0-9]{0,18}", payload["target"]
+                ):
+                    raise BotSecurityError("outbox_payload_invalid")
+            elif any(key in payload for key in ("amount", "currency", "target")):
+                raise BotSecurityError("outbox_payload_invalid")
         if not positive_id(payload["credential_version"]):
             raise BotSecurityError("outbox_payload_invalid")
     else:
