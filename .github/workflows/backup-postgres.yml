@@ -71,11 +71,19 @@ jobs:
           export PGAPPNAME=windrop-ci-backup
           export PGOPTIONS='-c default_transaction_read_only=on -c lock_timeout=5000'
           # Plaintext никогда не попадает на диск: pipe сразу в age.
-          if ! pg_dump --dbname="$DATABASE_URL" --no-password \
-              --format=custom --no-owner --no-privileges 2>/dev/null \
-              | age --encrypt --recipient "$RECIPIENT" > "$DEST" 2>/dev/null; then
+          # stderr обеих половин пишем раздельно: иначе причина отказа невидима.
+          PG_ERR="$(mktemp)"; AGE_ERR="$(mktemp)"
+          if pg_dump --dbname="$DATABASE_URL" --no-password \
+              --format=custom --no-owner --no-privileges 2>"$PG_ERR" \
+              | age --encrypt --recipient "$RECIPIENT" > "$DEST" 2>"$AGE_ERR"; then
+            rm -f "$PG_ERR" "$AGE_ERR"
+          else
             rm -f "$DEST"
-            echo "Backup не завершён; partial-файл не является резервной копией"; exit 1
+            echo "Backup не завершён; partial-файл не является резервной копией"
+            sed -n '1,15p' "$PG_ERR" | sed 's#//[^@]*@#//***@#g'
+            sed -n '1,15p' "$AGE_ERR"
+            rm -f "$PG_ERR" "$AGE_ERR"
+            exit 1
           fi
           test -s "$DEST"
           echo "dump_bytes=$(stat -c%s "$DEST")" >> "$GITHUB_STEP_SUMMARY"
