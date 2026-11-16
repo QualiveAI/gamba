@@ -3,7 +3,7 @@
 Стек собран так, чтобы всё работало без домашнего компьютера и без платных планов:
 **Neon** (Postgres) + **Upstash** (Redis) + **Cloudflare Pages** (статика Mini App и
 проксирующая Function) + **Render** (API + bot worker + scheduler в одном контейнере) +
-**Cloudflare R2** (зашифрованные бэкапы).
+зашифрованные бэкапы (артефакт GitHub Actions, опционально Cloudflare R2).
 Landing остаётся на **Cloudflare Pages** из отдельного репозитория `gamba-landing`.
 
 ```
@@ -17,7 +17,7 @@ Render windrop-api ─┬─ uvicorn (API)
                     ├─▶ Neon Postgres (Ohio, scale-to-zero)
                     └─▶ Upstash Redis (rediss://)
 Render windrop-api, старт контейнера ──▶ python -m app.bot.main (provisioning webhook)
-GitHub Actions 03:17 UTC ──▶ pg_dump | age → R2 (хранение 14 дней)
+GitHub Actions 03:17 UTC ──▶ pg_dump (клиент 18) | age → артефакт, 14 дней
 GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одноразовая БД
 ```
 
@@ -52,7 +52,7 @@ GitHub Actions вс 04:17 UTC ──▶ restore-drill: latest dump → одно�
 | 5 | GitHub | secrets + variables, `migrate.yml` | схема БД в Neon |
 | 6 | Render | **Blueprint** из `render.yaml` + env | `https://windrop-api.onrender.com` |
 | 7 | Render | `WEBAPP_URL`/`CORS_ALLOW_ORIGINS` = домен Pages, Restart | бот открывает Mini App |
-| 8 | GitHub | первый ручной запуск backup | дамп в R2 |
+| 8 | GitHub | первый ручной запуск backup | дамп в артефакте |
 
 ## 1. Neon
 
@@ -115,20 +115,23 @@ Repo → Settings → Secrets and variables → Actions.
 | Secret | Откуда |
 |---|---|
 | `DATABASE_URL_PROD` | DSN Neon (тот же, что попадёт в Render) |
-| `R2_ACCOUNT_ID` | Cloudflare dashboard → R2 → Account ID |
-| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 → Manage API Tokens → Create (Object Read & Write) |
-| `R2_BUCKET` | имя бакета, например `windrop-backups` |
-| `AGE_PRIVATE_KEY` | содержимое приватного ключа age (см. ниже) |
+| `AGE_PRIVATE_KEY` | приватный ключ age (см. ниже) |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | **необязательно**, только если подключаешь Cloudflare R2 |
 
 **Variables:** `AGE_RECIPIENT_PUBLIC` — публичная часть age.
 
 Минимум для первого запуска — **только `DATABASE_URL_PROD`**: без него не пройдёт шаг с миграциями.
-R2 и age нужны лишь для бэкапов, их можно добавить после того, как приложение поднимется.
+Минимум для бэкапов — `AGE_PRIVATE_KEY` (secret) и `AGE_RECIPIENT_PUBLIC` (variable):
+шифрованный дамп складывается артефактом GitHub Actions (14 дней, 500 МБ бесплатного
+хранилища хватает с запасом). R2 — необязательное дополнение: он включается только из
+Cloudflare dashboard и требует карту, без этого API отвечает `code: 10042`.
 
 ```bash
-age-keygen -o windrop-backup.key            # приватный ключ в файл (chmod 600)
-grep '^# public key:' windrop-backup.key    # → AGE_RECIPIENT_PUBLIC
-# AGE_PRIVATE_KEY = всё содержимое windrop-backup.key (включая строку с public key)
+# age локально может отсутствовать; подойдёт обычный ssh-ключ ed25519 —
+# age принимает ssh-ed25519 как получателя и OpenSSH-ключ как идентичность.
+ssh-keygen -t ed25519 -N "" -C "windrop-backup-age" -f windrop-backup.key
+cat windrop-backup.key.pub      # → AGE_RECIPIENT_PUBLIC (можно с комментарием)
+# AGE_PRIVATE_KEY = всё содержимое windrop-backup.key (закрытая часть)
 ```
 
 Файл `windrop-backup.key` храни в менеджере паролей и удали после загрузки секрета.
@@ -215,12 +218,17 @@ unset TG_TOKEN
 
 ## 9. Бэкапы
 
-Actions → **Backup PostgreSQL to R2** → Run workflow (ручной прогон). В Summary будут
+Actions → **Backup PostgreSQL** → Run workflow (ручной прогон). В Summary будут
 `dump_bytes`, `dump_sha256` и число дампов в бакете. Дальше job идёт по расписанию 03:17 UTC.
 
-Раз в неделю `Restore drill` скачивает `windrop-latest.dump.age`, расшифровывает и восстанавливает
-в одноразовую БД внутри runner, проверяя инвариант ledger (`balance_units/freebets == SUM(delta)`)
-и наличие миграции `0018`. Он никогда не читает `DATABASE_URL_PROD`.
+Раз в неделю `Restore drill` забирает последний артефакт `windrop-latest` (или объект из R2,
+если артефакта нет), расшифровывает его, восстанавливает в одноразовую БД PostgreSQL 18 внутри
+runner и проверяет инвариант ledger (`balance_units/freebets == SUM(delta)`) и наличие миграции
+`0018`. Он никогда не читает `DATABASE_URL_PROD`.
+
+Важная деталь: Neon работает на PostgreSQL 18, а в Ubuntu 24.04 лежит клиент 16 — `pg_dump 16`
+отказывается дампить сервер новее себя. Поэтому оба workflow ставят `postgresql-client-18` из
+PGDG и вызывают бинарники по пути `/usr/lib/postgresql/18/bin` (в `/usr/bin` остаётся враппер 16).
 
 ## Проверка после деплоя
 
@@ -260,7 +268,7 @@ Actions → **Backup PostgreSQL to R2** → Run workflow (ручной прог�
 
 ## Перенос с бесплатного стека на постоянный
 
-Всё состояние — в Neon (Postgres) и R2 (дампы); статика и API stateless.
+Всё состояние — в Neon (Postgres) и в шифрованных дампах (артефакты/R2); статика и API stateless.
 
 1. Новый Postgres (VPS/managed) → `pg_restore` из последнего `windrop-latest.dump.age`.
 2. `DATABASE_URL`/`REDIS_URL` → новые значения в env.
