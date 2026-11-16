@@ -326,9 +326,7 @@ async def _deposit_message(conn, *, user: dict, bot: dict) -> dict:
             "Os Coins caem na mesma conta."
         }
         if link:
-            result["reply_markup"] = {
-                "inline_keyboard": [[{"text": "Bot principal", "url": link}]]
-            }
+            result["reply_markup"] = {"inline_keyboard": [[{"text": "Bot principal", "url": link}]]}
         return result
     rows = []
     for coins in getattr(settings, "deposit_presets_list", []):
