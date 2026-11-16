@@ -34,7 +34,8 @@ async def list_cases(user=Depends(get_current_user)):  # noqa: B008  # noqa: B00
             out.append(
                 {
                     "id": c["id"],
-                    "name": case_name(c["name"], c["cover"] or c["name"]),
+                    # Fallback — имя из БД, а не обложка: путь к файлу не название.
+                    "name": case_name(c["name"], c["name"] or c["cover"] or "Case"),
                     "price_units": c["price_units"],
                     "rtp_profile": c["rtp_profile"],
                     "currency": c["currency"] or "units",

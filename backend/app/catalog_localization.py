@@ -41,6 +41,13 @@ CASE_NAME_ALIASES = {
     }.items()
 }
 
+# База хранит уже переведённые имена (seed пишет PT-BR в cases.name). Без
+# обратного поиска case_name("Caixa do Lixo", cover) промахивался бы по всем
+# словарям и возвращал fallback — путь обложки, который и видели игроки.
+CASE_NAME_ALIASES.update(
+    {value.lower(): value for value in CASE_NAMES_PT_BR.values()}
+)
+
 # Labels antigos podem chegar do seed legado. Todos os fallbacks abaixo são
 # PT-BR e não deixam texto cirílico chegar ao DOM.
 ITEM_NAMES_PT_BR = {
