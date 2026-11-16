@@ -62,7 +62,10 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-18
           curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.deb -o rclone.deb
           sudo dpkg -i rclone.deb
-          pg_restore --version; age --version; rclone version
+          # /usr/bin/pg_restore и psql остаются врапперами версии 16, поэтому
+          # дальше берём бинарники 18 явным путём.
+          /usr/lib/postgresql/18/bin/pg_restore --version
+          age --version; rclone version
 
       - name: Download latest dump (artifact first, R2 as fallback)
         env:
@@ -117,6 +120,7 @@ jobs:
         env:
           PGPASSWORD: drill-bootstrap-only
         run: |
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
           psql --host=127.0.0.1 --port=55432 --username=drill_admin \
             --dbname=postgres --no-psqlrc --set=ON_ERROR_STOP=1 \
             -c "CREATE DATABASE windrop_drill"
@@ -126,6 +130,7 @@ jobs:
           PGCONNECT_TIMEOUT: "15"
         run: |
           set -euo pipefail
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
           # Дамп сделан --no-owner --no-privileges; восстановление в чистую БД.
           pg_restore --dbname="$DRILL_DB" --no-owner --no-privileges \
             --exit-on-error --verbose "$DUMP" 2>/tmp/restore.log || {
@@ -138,6 +143,7 @@ jobs:
           PGCONNECT_TIMEOUT: "15"
         run: |
           set -euo pipefail
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
           psql --no-psqlrc --set=ON_ERROR_STOP=1 "$DRILL_DB" <<'SQL'
           \pset footer off
           -- Инвариант reconcile(): баланс = сумма ledger по каждой валюте.
@@ -168,6 +174,7 @@ jobs:
           PGCONNECT_TIMEOUT: "15"
         run: |
           set -euo pipefail
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
           BROKEN=$(psql --no-psqlrc -tA "$DRILL_DB" -c "
             WITH sums AS (
               SELECT user_id,

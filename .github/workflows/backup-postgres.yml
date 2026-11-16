@@ -57,7 +57,9 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-18
-          pg_dump --version
+          # /usr/bin/pg_dump — это pg_wrapper и он остаётся на версии 16, поэтому
+          # дальше всегда берём бинарники 18 по явному пути через PATH.
+          /usr/lib/postgresql/18/bin/pg_dump --version
           age --version
 
       - name: Validate inputs
@@ -71,6 +73,7 @@ jobs:
           AGE_RECIPIENT: ${{ vars.AGE_RECIPIENT_PUBLIC }}
         run: |
           set -euo pipefail
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
           umask 077
           if [ -e "$DEST" ] || [ -L "$DEST" ]; then
             echo "Файл назначения уже существует; отказ перезаписи"; exit 1
