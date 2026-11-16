@@ -52,8 +52,11 @@ jobs:
           # Дамп снят pg_dump 18 (Neon), поэтому и восстанавливать нужно клиентом
           # 18: pg_restore 16 такой дамп не примет.
           sudo install -d /usr/share/postgresql-common/pgdg
-          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            | sudo gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+          # Ключ качаем в файл и только потом отдаём gpg: pipe прямо в sudo'd gpg
+          # на runner'е падает с "Failure writing output to destination".
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /tmp/pgdg.asc
+          sudo gpg --dearmor --yes -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg /tmp/pgdg.asc
+          rm -f /tmp/pgdg.asc
           echo "deb https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
