@@ -66,6 +66,21 @@ async def _process_manager(client, source: dict, update: dict):
     await configure_bot(client, bot=staged, token=token, webhook=True)
     async with get_conn() as conn, conn.transaction():
         await activate_managed(conn, staged)
+        # Приветствие уходит в личный бот: именно оттуда игрок открывает Mini App,
+        # потому что initData подписывает его токен. Чат подтвердится, когда игрок
+        # нажмёт Start в своём боте, поэтому доставка ждёт в очереди, а не теряется.
+        await enqueue(
+            conn,
+            kind="bot_message",
+            user_id=staged["owner_user_id"],
+            bot_id=staged["bot_id"],
+            payload={
+                "template": "managed_ready",
+                "credential_version": staged["credential_version"],
+            },
+            dedupe_key=f"managed_ready:{staged['bot_id']}:{staged['credential_version']}",
+        )
+        # И короткая ссылка в главном боте — на случай, если игрок остался в нём.
         await enqueue(
             conn,
             kind="bot_message",
@@ -75,7 +90,7 @@ async def _process_manager(client, source: dict, update: dict):
                 "template": "managed_ready",
                 "credential_version": source["credential_version"],
             },
-            dedupe_key=f"managed_ready:{staged['bot_id']}:{staged['credential_version']}",
+            dedupe_key=f"managed_ready_main:{staged['bot_id']}:{source['credential_version']}",
         )
 
 

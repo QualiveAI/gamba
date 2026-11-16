@@ -5,7 +5,7 @@ import re
 from app.bot.client import TelegramAPIError
 from app.bot.dispatcher import FeatureUnavailable, optional_service
 from app.bot.outbox import enqueue, validate_payload
-from app.bot.pool import managed_owner_matches, trusted_main
+from app.bot.pool import create_intent, managed_owner_matches, trusted_main
 from app.bot.security import BotSecurityError, decrypt_secret, positive_id
 from app.bot.setup import main_bot_link, webapp_keyboard
 from app.config import settings
@@ -113,18 +113,81 @@ def _card_message(card: dict) -> dict:
     }
 
 
+async def _pending_intent(conn, *, user: dict):
+    return await (
+        await conn.execute(
+            "SELECT request_id FROM bot_managed_intents WHERE owner_user_id = %s "
+            "AND owner_telegram_id = %s AND status = 'pending' AND expires_at > now()",
+            (user["id"], user["telegram_id"]),
+        )
+    ).fetchone()
+
+
+async def _active_personal_bot(conn, *, user: dict):
+    return await (
+        await conn.execute(
+            "SELECT bot_id, username FROM bot_registry WHERE kind = 'managed' "
+            "AND owner_telegram_id = %s AND status = 'active' ORDER BY bot_id LIMIT 1",
+            (user["telegram_id"],),
+        )
+    ).fetchone()
+
+
+def _request_bot_keyboard(intent, user: dict, *, label: str, suggested_name: str = "Meu WINDROP"):
+    # Имя и username подставляем сами: игрок только подтверждает, а не выбирает.
+    return {
+        "keyboard": [
+            [
+                {
+                    "text": label,
+                    "request_managed_bot": {
+                        "request_id": intent["request_id"],
+                        "suggested_name": suggested_name,
+                        "suggested_username": f"windrop_{user['telegram_id']}_bot",
+                    },
+                }
+            ]
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": True,
+    }
+
+
 async def _managed_message(conn, *, user: dict, bot: dict, template: str) -> dict:
     link = main_bot_link()
     if bot["kind"] == "managed":
+        # Это личный бот игрока: здесь и открывается Mini App.
+        if template == "managed_ready":
+            return {
+                "text": (
+                    "Seu bot pessoal WINDROP está pronto! 🎉\n\n"
+                    "Toque em «Abrir WINDROP» para abrir caixas, jogar os mini-jogos e trocar "
+                    "seus Coins por gift cards. Avisos e códigos de gift card chegam aqui, "
+                    "neste bot.\n\n"
+                    "Suporte: /support"
+                ),
+                "reply_markup": webapp_keyboard(bot),
+            }
         result = {
-            "text": "Gerencie ou revogue seu bot pessoal no bot principal oficial. "
-            "Nunca envie senha, sessão do Telegram ou token para o suporte."
+            "text": "Bem-vindo à WINDROP!\n\n"
+            "Toque em «Abrir WINDROP» para abrir caixas, jogar e trocar Coins por gift cards. "
+            "Códigos de gift card chegam neste bot.\n\n"
+            "Suporte: /support · Pagamentos: /paysupport (somente no bot principal).",
+            "reply_markup": webapp_keyboard(bot),
         }
         if link:
-            result["reply_markup"] = {"inline_keyboard": [[{"text": "Bot principal", "url": link}]]}
+            result["reply_markup"]["inline_keyboard"].append(
+                [{"text": "Bot principal", "url": link}]
+            )
         return result
     enabled = getattr(settings, "managed_bots_enabled", False)
     if not enabled or template == "disabled":
+        if template in {"start", "menu"}:
+            # dev/test: личных ботов нет, поэтому показываем Mini App главного бота.
+            return {
+                "text": "Bem-vindo à WINDROP! Seus Coins, caixas, mini-jogos e gift cards.",
+                "reply_markup": webapp_keyboard(bot),
+            }
         return {"text": "A criação de bots pessoais está desativada neste ambiente. Use /menu."}
     if template == "managed_revoke":
         return {
@@ -132,13 +195,7 @@ async def _managed_message(conn, *, user: dict, bot: dict, template: str) -> dic
             "Sua conta, saldo e gift cards continuam com você no bot principal."
         }
     if template == "managed_opt_in":
-        intent = await (
-            await conn.execute(
-                "SELECT request_id FROM bot_managed_intents WHERE owner_user_id = %s "
-                "AND owner_telegram_id = %s AND status = 'pending' AND expires_at > now()",
-                (user["id"], user["telegram_id"]),
-            )
-        ).fetchone()
+        intent = await _pending_intent(conn, user=user)
         if not intent:
             return {"text": "A autorização expirou. Use /createbot para autorizar novamente."}
         return {
@@ -146,22 +203,52 @@ async def _managed_message(conn, *, user: dict, bot: dict, template: str) -> dic
             "O nome escolhido por você será mantido. O bot atenderá somente sua conta. "
             "Para reconectar, confirme o bot existente no fluxo oficial após /reconnectbot ID.\n"
             "Não envie senha, sessão ou token. Autorização válida por 15 minutos.",
-            "reply_markup": {
-                "keyboard": [
-                    [
-                        {
-                            "text": "Criar meu bot pessoal",
-                            "request_managed_bot": {
-                                "request_id": intent["request_id"],
-                                "suggested_name": "Meu WINDROP",
-                                "suggested_username": f"windrop_{user['telegram_id']}_bot",
-                            },
-                        }
+            "reply_markup": _request_bot_keyboard(intent, user, label="Criar meu bot pessoal"),
+        }
+    if template == "managed_ready":
+        # Бот создан: в главном чате остаётся только ссылка на личного бота — играть
+        # нужно там, потому что initData подписывает именно он.
+        personal = await _active_personal_bot(conn, user=user)
+        if personal:
+            return {
+                "text": f"Seu bot pessoal está pronto: @{personal['username']}\n"
+                "Abra-o e toque em «Abrir WINDROP» para jogar.",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": "Abrir meu bot", "url": f"https://t.me/{personal['username']}"}]
                     ]
-                ],
-                "resize_keyboard": True,
-                "one_time_keyboard": True,
-            },
+                },
+            }
+        return {"text": "Seu bot pessoal foi criado. Use /mybot para ver o usuário dele."}
+    if template in {"start", "menu"}:
+        # Главный бот — вход и оплата: сначала личный бот, потом игра.
+        personal = await _active_personal_bot(conn, user=user)
+        if personal:
+            return {
+                "text": (
+                    f"Bem-vindo de volta à WINDROP!\n\nSeu bot pessoal: @{personal['username']}\n"
+                    "Abra-o e toque em «Abrir WINDROP» para jogar. Gift cards chegam lá."
+                ),
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": "Abrir meu bot", "url": f"https://t.me/{personal['username']}"}]
+                    ]
+                },
+            }
+        intent = await _pending_intent(conn, user=user) or await create_intent(conn, user=user)
+        return {
+            "text": (
+                "Bem-vindo à WINDROP! 🎉\n\n"
+                "Aqui você acompanha seus Coins, abre caixas, joga mini-jogos e troca as "
+                "recompensas por gift cards.\n\n"
+                "Como começar:\n"
+                "1. Toque em «Jogar» — o Telegram cria seu bot pessoal com o seu nome em "
+                "segundos, você só confirma.\n"
+                "2. Abra o seu bot e toque em «Abrir WINDROP».\n"
+                "3. Gift cards e avisos chegam no seu bot pessoal.\n\n"
+                "Suporte: /support · Pagamentos: /paysupport"
+            ),
+            "reply_markup": _request_bot_keyboard(intent, user, label="Jogar"),
         }
     bots = await (
         await conn.execute(
@@ -194,7 +281,15 @@ async def _managed_message(conn, *, user: dict, bot: dict, template: str) -> dic
 
 async def _command_message(conn, *, job: dict, user: dict, bot: dict) -> tuple[dict, bool]:
     template = job["payload"]["template"]
-    if template in {"managed", "managed_opt_in", "managed_ready", "managed_revoke", "disabled"}:
+    if template in {
+        "start",
+        "menu",
+        "managed",
+        "managed_opt_in",
+        "managed_ready",
+        "managed_revoke",
+        "disabled",
+    }:
         return await _managed_message(conn, user=user, bot=bot, template=template), False
     if template == "balance":
         return {
