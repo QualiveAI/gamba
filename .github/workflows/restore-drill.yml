@@ -29,7 +29,8 @@ jobs:
     timeout-minutes: 30
     services:
       postgres_test:
-        image: postgres:16
+        # Версия временной БД совпадает с версией Neon: дамп 18 в сервер 16 не входит.
+        image: postgres:18
         env:
           POSTGRES_USER: drill_admin
           POSTGRES_PASSWORD: drill-bootstrap-only
@@ -47,7 +48,16 @@ jobs:
       - name: Prepare tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client age
+          sudo apt-get install -y -qq age curl ca-certificates gnupg
+          # Дамп снят pg_dump 18 (Neon), поэтому и восстанавливать нужно клиентом
+          # 18: pg_restore 16 такой дамп не примет.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-18
           curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.deb -o rclone.deb
           sudo dpkg -i rclone.deb
           pg_restore --version; age --version; rclone version

@@ -44,7 +44,17 @@ jobs:
       - name: Prepare tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client age
+          sudo apt-get install -y -qq age curl ca-certificates gnupg
+          # Neon работает на PostgreSQL 18, а в Ubuntu 24.04 лежит клиент 16 —
+          # pg_dump 16 отказывается дампить сервер новее себя
+          # ("aborting because of server version mismatch"). Ставим клиент 18 из PGDG.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+          echo "deb https://apt.postgresql.org/pub/repos/apt noble-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-18
           pg_dump --version
           age --version
 
