@@ -11,7 +11,7 @@ async function loadModule() {
   return import(MODULE);
 }
 
-function context({ url, method = 'GET', headers = {}, body = null }) {
+function context({ url, method = 'GET', headers = {}, body = null, env = {} }) {
   return {
     request: {
       url,
@@ -19,7 +19,7 @@ function context({ url, method = 'GET', headers = {}, body = null }) {
       headers: new Headers(headers),
       arrayBuffer: async () => (body ? new TextEncoder().encode(body).buffer : new ArrayBuffer(0)),
     },
-    env: {},
+    env,
   };
 }
 
@@ -93,10 +93,44 @@ test('недоступный upstream даёт 503 без деталей', async
   const original = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('upstream 10.0.0.5:5432 refused'); };
   try {
-    const res = await onRequest(context({ url: 'https://windrop.pages.dev/api/wallet' }));
+    const res = await onRequest(context({ url: 'https://windrop.pages.dev/api/wallet', env: { UPSTREAM_RETRY_DELAY_MS: '0' } }));
     assert.equal(res.status, 503);
     const body = await res.text();
     assert.ok(!body.includes('10.0.0.5'));
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('502 от просыпающегося Render повторяется внутри функции и заканчивается успехом', async () => {
+  const { onRequest } = await loadModule();
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls < 3) return new Response('gateway', { status: 502 });
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const res = await onRequest(context({ url: 'https://windrop.pages.dev/api/health', env: { UPSTREAM_RETRY_DELAY_MS: '0' } }));
+    assert.equal(res.status, 200);
+    assert.equal(calls, 3);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('Render недоступен совсем: после всех попыток — 503 и никаких деталей', async () => {
+  const { onRequest } = await loadModule();
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('bad gateway', { status: 502 }); };
+  try {
+    const res = await onRequest(context({ url: 'https://windrop.pages.dev/api/health', env: { UPSTREAM_RETRY_DELAY_MS: '0' } }));
+    assert.equal(res.status, 503);
+    assert.equal(calls, 3);
+    const body = await res.text();
+    assert.ok(!body.includes('bad gateway'));
   } finally {
     globalThis.fetch = original;
   }

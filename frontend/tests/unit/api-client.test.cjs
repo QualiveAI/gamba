@@ -120,7 +120,7 @@ test('таймаут возвращает безопасную ошибку и �
 
 test('ошибки API не отражают HTML, ключи или сырые сообщения провайдера', async () => {
   for (const data of [{ detail: '<script>SECRET</script>' }, { detail: { message: 'token=SECRET' } }, { code: 'unknown', key: 'SECRET' }]) {
-    const client = createClient({ getTelegram: () => sdk, fetch: async path => path === '/auth/telegram'
+    const client = createClient({ retryDelayMs: 0, getTelegram: () => sdk, fetch: async path => path === '/auth/telegram'
       ? response(200, { access_token: jwt() }) : response(502, data) });
     await assert.rejects(client.request('/wallet'), error => !error.message.includes('SECRET') && error.code === 'service_unavailable');
   }
@@ -138,7 +138,7 @@ test('ошибка auth кэшируется до явного повторен�
 
 test('идемпотентный GET повторяется один раз после сетевого сбоя', async () => {
   let calls = 0;
-  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+  const client = createClient({ retryDelayMs: 0, getTelegram: () => sdk, fetch: async path => {
     if (path === '/auth/telegram') return response(200, { access_token: jwt() });
     calls++;
     if (calls === 1) throw new Error('connection reset');
@@ -162,7 +162,7 @@ test('mutating POST после сетевого сбоя сам не повто�
 
 test('авторизация повторяется после сетевого сбоя один раз', async () => {
   let authCalls = 0;
-  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+  const client = createClient({ retryDelayMs: 0, getTelegram: () => sdk, fetch: async path => {
     if (path === '/auth/telegram') {
       authCalls++;
       if (authCalls === 1) throw new Error('connection reset');
@@ -177,11 +177,24 @@ test('авторизация повторяется после сетевого 
 
 test('сетевой сбой авторизации не кэшируется как отказ Telegram', async () => {
   let authCalls = 0;
-  const client = createClient({ getTelegram: () => sdk, fetch: async path => {
+  const client = createClient({ retryDelayMs: 0, getTelegram: () => sdk, fetch: async path => {
     if (path === '/auth/telegram') { authCalls++; throw new Error('connection reset'); }
     return response(200, {});
   } });
   await assert.rejects(client.request('/cases'), error => error.code === 'network_unavailable');
   await assert.rejects(client.request('/cases'), error => error.code === 'network_unavailable');
-  assert.equal(authCalls, 4);
+  assert.equal(authCalls, 8);
+});
+
+test('холодный старт: несколько 503 подряд, затем успех — клиент дожидается', async () => {
+  let calls = 0;
+  const client = createClient({ retryDelayMs: 0, getTelegram: () => sdk, fetch: async path => {
+    if (path === '/auth/telegram') return response(200, { access_token: jwt() });
+    calls++;
+    if (calls < 4) return response(503, { detail: 'service_unavailable' });
+    return response(200, { ok: true });
+  } });
+  const data = await client.request('/cases');
+  assert.equal(calls, 4);
+  assert.deepEqual(data, { ok: true });
 });

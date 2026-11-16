@@ -20,15 +20,51 @@ const REQUEST_HEADERS = ['authorization', 'content-type', 'accept', 'accept-lang
 // сессия живёт в JWT, cookie не используются.
 const RESPONSE_HEADERS = ['content-type', 'retry-after', 'x-request-id'];
 
-// Холодный старт Render free занимает до минуты; ждём дольше обычного,
-// но меньше лимита самой функции, чтобы вернуть внятную ошибку, а не зависнуть.
-const UPSTREAM_TIMEOUT_MS = 25000;
+// Погашенный free-инстанс Render отвечает быстрым 502 и просыпается 30–50 с.
+// Поэтому один запрос клиента превращается в несколько попыток внутри функции:
+// 3 × 8 с + 2 паузы по 2 с ≈ 28 с — меньше 30-секундного лимита самой функции,
+// и достаточное окно, чтобы контейнер успел подняться. Если не получилось —
+// отдаём понятный 503, а клиент повторит запрос целиком.
+const UPSTREAM_TIMEOUT_MS = 8000;
+const UPSTREAM_ATTEMPTS = 3;
+const UPSTREAM_RETRY_DELAY_MS = 2000;
+// 502/503/504 от Render в этом контексте означают «инстанс просыпается».
+const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504]);
 
 function jsonError(detail, status) {
   return new Response(JSON.stringify({ detail }), {
     status,
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(env) {
+  const value = Number(env && env.UPSTREAM_RETRY_DELAY_MS);
+  return Number.isFinite(value) && value >= 0 ? value : UPSTREAM_RETRY_DELAY_MS;
+}
+
+async function fetchUpstream(target, options, env) {
+  for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    try {
+      const response = await fetch(target, { ...options, signal: controller.signal });
+      if (!RETRYABLE_UPSTREAM_STATUSES.has(response.status)) return response;
+      // Последняя попытка тоже неудачна: отдаём свой компактный 503, а не
+      // HTML-страницу Render.
+      if (attempt === UPSTREAM_ATTEMPTS) return null;
+    } catch (_) {
+      if (attempt === UPSTREAM_ATTEMPTS) return null;
+    } finally {
+      clearTimeout(timer);
+    }
+    await sleep(retryDelayMs(env));
+  }
+  return null;
 }
 
 function allowedOrigin(request, env) {
@@ -67,14 +103,16 @@ export async function onRequest(context) {
 
   let upstream;
   try {
-    upstream = await fetch(target.toString(), {
+    upstream = await fetchUpstream(target.toString(), {
       method,
       headers,
       body,
       redirect: 'manual',
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    }, env);
   } catch (_) {
+    upstream = null;
+  }
+  if (!upstream) {
     // Детали не пишем: в лог уходит только факт недоступности upstream.
     return jsonError('service_unavailable', 503);
   }
