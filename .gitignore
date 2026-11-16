@@ -33,3 +33,6 @@ Thumbs.db
 playwright-report/
 test-results/
 shots/
+
+# Локальный кэш wrangler (Pages deploy)
+.wrangler/
