@@ -847,9 +847,21 @@ window.addEventListener('pagehide', () => commerce.dispose());
 window.addEventListener('pageshow', e => { if (e.persisted) window.location.reload(); });
 
 /* ---------- init ---------- */
+// Free-инстанс Render поднимается 30–60 с после простоя: вместо немого экрана
+// через 12 секунд честно говорим, что сервер просыпается.
+function scheduleWakeHint() {
+  window.clearTimeout(scheduleWakeHint.timer);
+  scheduleWakeHint.timer = window.setTimeout(() => {
+    const note = document.querySelector('#view .form-note');
+    if (note && initialState === 'loading') {
+      note.textContent = 'O servidor gratuito está acordando após um período ocioso. Pode levar até um minuto.';
+    }
+  }, 12000);
+}
+
 function initialize(retry = false) {
   if (initialPromise) return initialPromise;
-  initialState = 'loading'; initialError = ''; renderBal(); render();
+  initialState = 'loading'; initialError = ''; renderBal(); render(); scheduleWakeHint();
   initialPromise = (async () => {
     let authenticated = false;
     try {
@@ -862,7 +874,10 @@ function initialize(retry = false) {
     } catch (error) {
       initialState = 'error'; initialAuthError = !authenticated || error.status === 401;
       initialError = WindropApi.errorMessage(error); render();
-    } finally { initialPromise = null; }
+    } finally {
+      window.clearTimeout(scheduleWakeHint.timer);
+      initialPromise = null;
+    }
   })();
   return initialPromise;
 }
