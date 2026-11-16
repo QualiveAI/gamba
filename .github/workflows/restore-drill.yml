@@ -1,12 +1,12 @@
 name: Restore drill (backup verification)
 
 # Дамп без проверки восстановления не является резервной копией. Drill каждую
-# неделю скачивает latest dump из R2, расшифровывает его и восстанавливает во
-# временную БД внутри runner, затем проверяет инварианты ledger/схемы.
+# неделю скачивает последний дамп (артефакт workflow «Backup PostgreSQL», а если
+# R2 настроен и артефакта нет — объект из R2), расшифровывает его и восстанавливает
+# во временную БД внутри runner, затем проверяет инварианты ledger/схемы.
 # Никогда не пишет в production БД и не читает DATABASE_URL_PROD.
 #
-# GitHub Secrets: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
-#                 R2_BUCKET, AGE_PRIVATE_KEY
+# GitHub Secrets: AGE_PRIVATE_KEY (обязательно), R2_* (необязательно)
 # GitHub Variables: AGE_RECIPIENT_PUBLIC (не нужен здесь; приватный ключ берётся
 #                   из secrets — именно он доказывает, что пара ключей цела)
 
@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: restore-drill
@@ -51,8 +52,9 @@ jobs:
           sudo dpkg -i rclone.deb
           pg_restore --version; age --version; rclone version
 
-      - name: Download latest dump from R2
+      - name: Download latest dump (artifact first, R2 as fallback)
         env:
+          GH_TOKEN: ${{ github.token }}
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
           RCLONE_CONFIG_R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
@@ -61,9 +63,26 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          rclone copyto "R2:${{ secrets.R2_BUCKET }}/backups/windrop-latest.dump.age" "$ENC" \
-            --s3-no-check-bucket --retries 3 --timeout 2m
-          test -s "$ENC"
+          # Основной источник — артефакт workflow «Backup PostgreSQL».
+          ARTIFACT_ID="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts?name=windrop-latest&per_page=1" \
+            --jq '.artifacts[0].id // empty' 2>/dev/null || true)"
+          if [ -n "$ARTIFACT_ID" ] && gh api \
+              "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" > /tmp/drill.zip 2>/dev/null; then
+            unzip -o -q /tmp/drill.zip -d /tmp/drill && rm -f /tmp/drill.zip
+            FOUND="$(find /tmp/drill -name '*.dump.age' -type f | head -1)"
+            if [ -n "$FOUND" ]; then
+              cp "$FOUND" "$ENC"
+              echo "источник=артефакт" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          # Резервный источник: R2, если он настроен.
+          if [ ! -s "$ENC" ] && [ -n "${{ secrets.R2_BUCKET }}" ]; then
+            rclone copyto "R2:${{ secrets.R2_BUCKET }}/backups/windrop-latest.dump.age" "$ENC" \
+              --s3-no-check-bucket --retries 3 --timeout 2m
+            echo "источник=r2" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          test -s "$ENC" || { echo "Не найден ни артефакт бэкапа, ни объект в R2"; exit 1; }
           echo "encrypted_bytes=$(stat -c%s "$ENC")" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Decrypt
