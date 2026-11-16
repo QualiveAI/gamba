@@ -38,11 +38,19 @@ async def claim_daily(conn, user):
         (user_id, amount),
     )
     new_streak = streak + 1
-    await conn.execute(
-        "UPDATE users SET balance_freebets = balance_freebets + %s, last_claim_at = now() "
-        "WHERE id = %s",
-        (amount, user_id),
-    )  # noqa: E501
+    # Баланс меняется только через ledger: прямой UPDATE ломал инвариант
+    # balance == SUM(delta), на котором стоит restore-drill.
+    from core.engine.ledger.ledger import post_entry
+
+    await post_entry(
+        conn,
+        user_id,
+        "freebets",
+        amount,
+        "daily_claim_freebets",
+        ref_id=f"daily:{today.isoformat()}",
+    )
+    await conn.execute("UPDATE users SET last_claim_at = now() WHERE id = %s", (user_id,))
     await conn.commit()
     from app.analytics.events import track
 

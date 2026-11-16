@@ -328,7 +328,10 @@ async def dispatch_update(client, *, bot: dict, update: dict):
                             conn, bot_id=personal_id, owner_telegram_id=sender["id"]
                         )
                         template = "managed_revoke"
-        if command in {"grant", "revoke", "topup"} and current["kind"] == "main":
+        # /topup доступен в любом боте: демо-админ накручивает себе там, где играет
+        # (личный бот), а не только в главном. /grant и /revoke — управление
+        # доступом, оно остаётся за главным ботом.
+        if command == "topup" or (command in {"grant", "revoke"} and current["kind"] == "main"):
             # Демо-доступ для записи роликов: /grant даёт право, /topup накручивает
             # Coins самому себе. Баланс идёт только через ledger (reason=demo_topup).
             template, extra = await _admin_command(
