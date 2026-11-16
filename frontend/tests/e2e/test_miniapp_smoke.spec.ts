@@ -167,7 +167,7 @@ test("profile_daily_deposit_withdraw", async ({ page }) => {
   await expect(page.locator("#wd-preview")).toContainText('Nenhuma moeda foi gasta');
   await expect(page.locator('[data-giftpreview]')).toBeDisabled();
   await expect(page.locator('#wd-count')).toHaveCount(0);
-  await expect(page.locator('#create-personal-bot')).toHaveAttribute('href', 'https://t.me/windrop_bot?start=managed');
+  await expect(page.locator('#personal-bot')).toContainText('Jogar');
   // рефералка
   await expect(page.locator("#reflink")).toHaveValue(/WDTEST/);
 });

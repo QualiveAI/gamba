@@ -213,7 +213,8 @@ test('managed_auth_context_and_deep_links_do_not_accept_client_owner_fields', as
   await page.goto('/?auth_bot_id=777777&owner_telegram_id=888888');
   await expect(page.locator('#withdraw')).toBeVisible();
   await expect(page.locator('#personal-bot')).toContainText('@personal_bot');
-  await expect(page.locator('#create-personal-bot')).toHaveAttribute('href', 'https://t.me/windrop_bot?start=managed');
+  await expect(page.locator('#personal-bot')).toContainText('@personal_bot');
+  await expect(page.locator('#personal-bot')).toContainText('não é necessária');
   expect(base.authBodies).toEqual([{ init_data: 'signed-test-init-data', auth_bot_id: 777777 }]);
   await page.click('.nav [data-tab="games"]');
   await page.evaluate(() => { window.location.hash = 'deposit'; });

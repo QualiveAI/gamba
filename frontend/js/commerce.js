@@ -687,8 +687,8 @@
       return `<h2>Meu bot pessoal</h2><p class="form-note">Gerencie seu bot pelo bot principal. Nunca envie tokens ou códigos por esta página.</p>
         ${!bots.loaded ? notice('Consultando seus bots…') : ''}${message(bots.error)}
         ${bots.managed_bots.length ? `<ul class="list">${bots.managed_bots.map(bot => `<li><span><b>@${escape(bot.username)}</b><small>${escape(statuses[bot.status] || 'Indisponível')}</small></span></li>`).join('')}</ul>` : bots.loaded && !bots.error ? '<p class="form-note">Nenhum bot pessoal vinculado a esta conta.</p>' : ''}
-        ${bots.enabled && bots.create_url ? `<a class="cta" id="create-personal-bot" href="${escape(bots.create_url)}" target="_blank" rel="noopener noreferrer">Criar meu bot pessoal</a>` : '<button class="cta" disabled>Criação de bot indisponível</button>'}
-        <p class="form-note">No bot principal: /start managed para criar; /mybot para consultar seu bot.</p>${mainBotLink()}`;
+        ${bots.enabled ? '<p class="form-note">Para criar ou religar seu bot: abra o bot principal e toque em «Jogar» (ou /start managed). Dentro do app a criação não é necessária — se você está aqui, seu bot já existe.</p>' : '<button class="cta" disabled>Criação de bot indisponível</button>'}
+        ${mainBotLink()}`;
     }
 
     function handleClick(dataset) {
