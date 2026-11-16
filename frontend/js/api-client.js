@@ -108,7 +108,7 @@
 
   function createClient({ fetch: transport = globalThis.fetch.bind(globalThis), origin = '', search = '',
     getTelegram = () => globalThis.Telegram && globalThis.Telegram.WebApp,
-    storage, timeoutMs = 45000, retryDelayMs = 5000 } = {}) {
+    storage, timeoutMs = 45000, retryDelayMs = 5000, wakeOrigin = '' } = {}) {
     let token = '', context = null, authPromise = null, authFailure = null;
     // Старый общий ключ нельзя переносить между аккаунтами/ботами. Новые JWT не сохраняются.
     try { storage && storage.removeItem('jwt'); } catch (_) {}
@@ -146,6 +146,20 @@
       }
     }
 
+    let wakeSent = false;
+
+    // Render free поднимается только от «живого» браузерного запроса: запросы через
+    // Cloudflare его не будят (проверено). Ответ читать не нужно — достаточно, чтобы
+    // соединение дошло до сервиса и Render начал старт. Поэтому no-cors и без await.
+    function wakeUpstream() {
+      if (wakeSent || !wakeOrigin) return;
+      wakeSent = true;
+      try {
+        Promise.resolve(transport(wakeOrigin + '/health/live', { mode: 'no-cors', cache: 'no-store' }))
+          .catch(() => {});
+      } catch (_) { /* пробуждение не критично: дальше сработают повторы */ }
+    }
+
     function authenticate() {
       if (authFailure) return Promise.reject(authFailure);
       if (token) return Promise.resolve(token);
@@ -157,6 +171,7 @@
         if (typeof initData !== 'string' || !initData.trim() || initData.length > 16384) {
           throw new ApiError('telegram_required', 401);
         }
+        wakeUpstream();
         const body = { init_data: initData };
         if (botId !== undefined) body.auth_bot_id = botId;
         const options = { method: 'POST',

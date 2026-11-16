@@ -15,7 +15,9 @@ const UPSTREAM_ORIGIN = 'https://windrop-api.onrender.com';
 
 // Заголовки запроса, которые имеет смысл переносить. Остальное (Host,
 // cookie, cf-*) не пересылаем: они относятся к Cloudflare, а не к API.
-const REQUEST_HEADERS = ['authorization', 'content-type', 'accept', 'accept-language', 'x-request-id'];
+// User-Agent переносим обязательно: без него запрос выглядит как анонимный бот,
+// а Render free поднимает погашенный инстанс только под «живой» трафик.
+const REQUEST_HEADERS = ['authorization', 'content-type', 'accept', 'accept-language', 'user-agent', 'x-request-id'];
 // Заголовки ответа, которые клиенту полезны. set-cookie не переносим:
 // сессия живёт в JWT, cookie не используются.
 const RESPONSE_HEADERS = ['content-type', 'retry-after', 'x-request-id'];
@@ -94,6 +96,9 @@ export async function onRequest(context) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  // Если клиент не прислал User-Agent (curl, health-check), подставляем свой:
+  // полностью анонимные запросы Render считает не трафиком и не будит сервис.
+  if (!headers.has('user-agent')) headers.set('user-agent', 'WindropApiProxy/1.0');
 
   const method = request.method.toUpperCase();
   const withBody = method !== 'GET' && method !== 'HEAD';

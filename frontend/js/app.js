@@ -41,6 +41,7 @@ const previewMode = !!(localPreview && localPreview.isEnabled());
 // Раздельная схема static+API требует точного origin; пустое значение = same-origin.
 const apiOrigin = String(window.WINDROP_API_ORIGIN || window.location.origin).replace(/\/+$/, "");
 const apiClient = previewMode ? localPreview.createClient() : WindropApi.createClient({ origin: apiOrigin,
+  wakeOrigin: String(window.WINDROP_WAKE_ORIGIN || "").replace(/\/+$/, ""),
   search: window.location.search, getTelegram, storage: sessionStore });
 const api = (path, options) => apiClient.request(path, options);
 const commerce = WindropCommerce.createCommerce({ client: apiClient, storage: sessionStore, getTelegram,

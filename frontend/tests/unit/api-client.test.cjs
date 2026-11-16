@@ -198,3 +198,25 @@ test('холодный старт: несколько 503 подряд, зате
   assert.equal(calls, 4);
   assert.deepEqual(data, { ok: true });
 });
+
+test('перед авторизацией клиент будит API прямым запросом в браузерном режиме', async () => {
+  const calls = [];
+  const client = createClient({ retryDelayMs: 0, wakeOrigin: 'https://windrop-api.onrender.com',
+    getTelegram: () => sdk, fetch: async (path, options) => {
+      calls.push([path, options && options.mode]);
+      return path === '/auth/telegram' ? response(200, { access_token: jwt() }) : response(200, {});
+    } });
+  await client.request('/cases');
+  assert.deepEqual(calls[0], ['https://windrop-api.onrender.com/health/live', 'no-cors']);
+  assert.equal(calls.filter(call => call[0].endsWith('/health/live')).length, 1);
+});
+
+test('без wakeOrigin прямых запросов в Render нет', async () => {
+  const calls = [];
+  const client = createClient({ retryDelayMs: 0, getTelegram: () => sdk, fetch: async path => {
+    calls.push(path);
+    return path === '/auth/telegram' ? response(200, { access_token: jwt() }) : response(200, {});
+  } });
+  await client.request('/cases');
+  assert.deepEqual(calls, ['/auth/telegram', '/cases']);
+});
