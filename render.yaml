@@ -22,8 +22,16 @@ envVarGroups:
         value: "true"
       - key: ALLOW_GUEST_AUTH
         value: "false"
+      # Оплата включена: Stars (инвойсы в чате и Mini App) и Telegram Gifts.
+      # Выключить — вернуть PAYMENTS_MODE=disabled без других правок.
       - key: PAYMENTS_MODE
-        value: disabled
+        value: live
+      - key: STARS_ENABLED
+        value: "true"
+      - key: GIFTS_ENABLED
+        value: "true"
+      - key: STARS_USD_PRICE
+        value: "0.013"
       - key: PAYMENT_WEB_ENABLED
         value: "false"
       - key: GIFTCARD_MODE

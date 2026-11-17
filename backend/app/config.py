@@ -63,7 +63,9 @@ class Settings(BaseSettings):
     coin_usd_price: Decimal = Field(default=Decimal("0.015"), gt=0)
     usd_brl_rate: Decimal = Field(default=Decimal("5.4"), gt=0)
     payment_fee_percent: Decimal = Field(default=Decimal("20"), ge=0, le=100)
-    stars_usd_price: Decimal = Field(default=Decimal("0.02"), gt=0)
+    # Это СТАВКА ВЫВОДА через Fragment ($0.013 за Star), а не цена покупки
+    # ($0.02): котировка должна считать выручку, которую реально получим.
+    stars_usd_price: Decimal = Field(default=Decimal("0.013"), gt=0)
     quote_ttl_seconds: int = Field(default=900, ge=30, le=3600)
     # Пакеты пополнения для кнопок в боте: главный бот продаёт Stars-инвойсы
     # прямо в чате, без Mini App.
