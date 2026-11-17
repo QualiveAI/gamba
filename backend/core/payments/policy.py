@@ -16,6 +16,18 @@ METHODS = {
 }
 
 
+def crypto_treasury_configured() -> bool:
+    """Прямой USDT TRC-20: адрес кошелька оператора задан и сеть — Tron."""
+    s = runtime_settings()
+    network = getattr(s, "treasury_network", "").lower()
+    asset = getattr(s, "treasury_asset", "").upper()
+    return bool(
+        getattr(s, "treasury_address", "").strip()
+        and network in {"tron", "trc20", ""}
+        and asset in {"USDT", ""}
+    )
+
+
 def runtime_settings():
     from app.config import settings
 
@@ -142,8 +154,10 @@ def configured_reason(method: str, mode: str, settings=None) -> str | None:
         return None
     if method == "paygate" or method == "card":
         return "Cartão indisponível: confirmação segura do provedor não configurada."
-    if method in ("paymento", "crypto"):
+    if method in ("paymento",):
         return "Cripto indisponível: transporte e destino verificados não configurados."
+    if method == "crypto" and not crypto_treasury_configured():
+        return "Endereço USDT do operador não configurado."
     if method == "stars":
         if not getattr(settings, "stars_enabled", False) or not primary_bot_id(settings):
             return "Telegram Stars não configurado."
@@ -169,10 +183,12 @@ async def ensure_enabled(
         key = "stars_enabled" if method == "stars" else "gifts_enabled"
         if getattr(settings, key, False) is not True:
             raise PaymentError("payment_not_configured", status_code=503)
-    if mode == "live" and method in ("card", "crypto"):
+    if mode == "live" and method == "card":
         # Достоверного production transport пока нет даже для ранее созданного
         # intent. Смена статуса/worker не должна обходить запрет live adapter.
         raise PaymentError("provider_live_not_configured", status_code=503)
+    if mode == "live" and method == "crypto" and not crypto_treasury_configured():
+        raise PaymentError("crypto_destination_not_configured", status_code=503)
     if creation and channel == "web" and not getattr(settings, "payment_web_enabled", False):
         raise PaymentError("payment_web_disabled", "Pagamentos pela web indisponíveis.", 403)
     if not await payment_flags(conn, method):

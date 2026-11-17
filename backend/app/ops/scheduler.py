@@ -99,6 +99,25 @@ async def serve_leader(conn: psycopg.AsyncConnection, stop: asyncio.Event) -> No
             jobs.discard(task)
 
     scheduler = create_scheduler(run_job)
+
+    # Прямые USDT TRC-20: проверка сети раз в 45 секунд, отдельной задачей,
+    # мимо job_lock и fence (сканер сам берёт соединения из пула).
+    async def scan_onchain() -> None:
+        if stop.is_set():
+            return
+        from app.payments.onchain import run_scan_job
+
+        await run_scan_job()
+
+    scheduler.add_job(
+        scan_onchain,
+        "interval",
+        seconds=45,
+        id="onchain_scan",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
     logger.info("Scheduler получил блокировку writer")
     try:

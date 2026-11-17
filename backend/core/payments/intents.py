@@ -161,6 +161,16 @@ async def create_intent(
         payload.update({"invoice_payload": f"deposit:{intent_id}", "action": "invoice_required"})
         if quote.mode == "sandbox":
             payload["action"] = "sandbox"
+    if quote.method == "crypto" and quote.mode == "live":
+        payload.update(
+            {
+                "action": "awaiting_payment",
+                "deposit_address": quote.address,
+                "deposit_chain": quote.chain,
+                # Сумма для пользователя: 6 знаков после запятой.
+                "amount_usdt": f"{quote.provider_amount_atomic / 10**6:.6f}",
+            }
+        )
     values = {
         "id": intent_id,
         "user_id": user["id"],

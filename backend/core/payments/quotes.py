@@ -10,8 +10,10 @@ from core.contracts.payment import PaymentError
 from core.payments.policy import (
     METHODS,
     PricingConfig,
+    crypto_treasury_configured,
     ensure_enabled,
     primary_bot_id,
+    runtime_settings,
     validate_actor,
 )
 
@@ -138,12 +140,28 @@ def build_quote(
             )
             currency, exponent = "XTR", 0
         elif method == "crypto":
-            if config.mode != "sandbox":
-                raise PaymentError("crypto_destination_not_configured", status_code=503)
-            # Fixture не является настоящим активом/сетью/депозитным адресом.
-            amount = ceil_atomic(Decimal(gross) / 100 / config.usd_brl_rate * 1_000_000)
-            currency, exponent = "TEST-USDT", 6
-            chain, token, address = "sandbox", "TEST-USDT", f"sandbox-wallet:{qid}"
+            if config.mode == "sandbox":
+                # Fixture не является настоящим активом/сетью/депозитным адресом.
+                amount = ceil_atomic(Decimal(gross) / 100 / config.usd_brl_rate * 1_000_000)
+                currency, exponent = "TEST-USDT", 6
+                chain, token, address = "sandbox", "TEST-USDT", f"sandbox-wallet:{qid}"
+            else:
+                if not crypto_treasury_configured():
+                    raise PaymentError("crypto_destination_not_configured", status_code=503)
+                base = ceil_atomic(Decimal(gross) / 100 / config.usd_brl_rate * 1_000_000)
+                if base < 100_000:
+                    raise PaymentError(
+                        "amount_too_small_for_crypto",
+                        "Valor mínimo não atingido para depósito em cripto.",
+                        422,
+                    )
+                # Казна одна на всех: в хвост суммы добавляем уникальные «центы» из
+                # id котировки, чтобы два незакрытых депозита не совпадали по сумме.
+                tail = int(qid, 16) % 10_000
+                amount = (base // 10_000) * 10_000 + tail
+                currency, exponent = "USDT", 6
+                s = runtime_settings()
+                chain, token, address = "tron", "USDT", s.treasury_address.strip()
     snapshot = config.snapshot()
     return PaymentQuote(
         qid,
